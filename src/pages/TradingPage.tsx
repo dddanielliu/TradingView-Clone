@@ -170,7 +170,7 @@ export function TradingPage() {
       colors: dark
         ? { background, border: "#2b2b2b", text: "#dbdbdb" }
         : { background, border: "#ebebeb", text: "#000000" },
-      brand: "OpenCharts",
+      brand: "TradingView-Clone",
     });
   };
   const snapshot = (action: "download" | "copy") => {

@@ -37,6 +37,12 @@ export default {
         success: "hsl(var(--success))",
         warning: "hsl(var(--warning))",
         buy: "hsl(var(--buy))",
+        pill: "hsl(var(--pill))",
+        popover: "hsl(var(--popover))",
+        "tv-active": {
+          DEFAULT: "hsl(var(--tv-active))",
+          foreground: "hsl(var(--tv-active-foreground))",
+        },
         sell: "hsl(var(--sell))",
       },
       borderRadius: {
@@ -45,7 +51,7 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+        sans: ["-apple-system", "BlinkMacSystemFont", '"Trebuchet MS"', "Roboto", "Ubuntu", "sans-serif"],
         mono: ["JetBrains Mono", "Fira Code", "SF Mono", "monospace"],
       },
       keyframes: {

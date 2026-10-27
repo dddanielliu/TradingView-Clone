@@ -12,6 +12,7 @@ import { useEconomicCalendar, type EconomicCalendarEvent } from "../../services/
 import { type NewsOverlayConfig } from "./constants.ts";
 import { extractCurrencies } from "./utils.ts";
 import { safeStorage } from "../../lib/safe-storage.ts";
+import { toChartTime } from "../../lib/chart-time.ts";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ export function useNewsOverlay(
       const containerRect = container.getBoundingClientRect();
 
       for (const ev of calendarEvents) {
-        const eventTimeSec = Math.floor(new Date(ev.time).getTime() / 1000);
+        const eventTimeSec = toChartTime(Math.floor(new Date(ev.time).getTime() / 1000));
         const x = timeScale.timeToCoordinate(
           eventTimeSec as Parameters<typeof timeScale.timeToCoordinate>[0],
         );

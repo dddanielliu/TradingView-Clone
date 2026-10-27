@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { MagnetMode } from "../pages/trading/constants.ts";
+import type { CursorMode, MagnetMode } from "../pages/trading/constants.ts";
 import { useAuthStore } from "../services/store.tsx";
 import {
   readTraderPrefs as readScopedTraderPrefs,
@@ -14,6 +14,8 @@ export interface ChartPreferences {
   drawingMagnet: boolean;
   /** Magnet mode: off / weak (snap near) / strong (always snap to OHLC). */
   magnetMode: MagnetMode;
+  /** The cursor tool (Cross / Dot / Arrow / Demonstration), kept like TradingView's. */
+  cursorMode: CursorMode;
   /** Keep the drawing tool armed after each placement. */
   stayInDrawingMode: boolean;
   /** Plugin IDs that are currently active (persisted across page loads). */
@@ -60,11 +62,13 @@ type TraderPrefs = Record<string, string>;
 const CHART_PREFS_UPDATED_EVENT = "chart-preferences-updated";
 
 const DEFAULT_CHART_PREFS: ChartPreferences = {
-  showBidLine: true,
-  showAskLine: true,
+  // TradingView shows one last-price label, not bid/ask lines.
+  showBidLine: false,
+  showAskLine: false,
   overlayPositionsOnChart: true,
   drawingMagnet: false,
   magnetMode: "none",
+  cursorMode: "cross",
   stayInDrawingMode: false,
   activePlugins: [],
   candleUpColor: "",
@@ -86,7 +90,8 @@ const DEFAULT_CHART_PREFS: ChartPreferences = {
   showCandleBorders: true,
   showVolume: true,
   showGrid: true,
-  showWatermark: true,
+  showWatermark: false,
+  // TradingView's "Countdown to bar close" is on by default.
   showCountdown: true,
   showOhlcLegend: true,
   challengeOverlay: false,
@@ -214,6 +219,8 @@ export function getChartPreferencesFromStorage(): ChartPreferences {
   // Migrate the old boolean magnet flag to the tri-state when unset.
   result.magnetMode =
     toMagnetMode(prefs.magnetMode) ?? (toBool(prefs.drawingMagnet, false) ? "weak" : "none");
+  const cursor = prefs.cursorMode;
+  result.cursorMode = cursor === "dot" || cursor === "arrow" || cursor === "demonstration" ? cursor : "cross";
   result.activePlugins = toStringArray(prefs.activePlugins, DEFAULT_CHART_PREFS.activePlugins);
   return result;
 }

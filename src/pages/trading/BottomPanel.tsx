@@ -519,7 +519,7 @@ function NewsFeed() {
         <span>— OpenCharts ships no news feed; connect a provider to make this live.</span>
       </div>
       {MOCK_NEWS.map((item, i) => (
-        <div key={i} className="px-3 py-2 hover:bg-secondary/30 cursor-pointer">
+        <div key={i} className="px-3 py-2 hover:bg-secondary/30 cursor-default">
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-0.5">
             <span>{item.time}</span>
             <span className="text-muted-foreground">|</span>

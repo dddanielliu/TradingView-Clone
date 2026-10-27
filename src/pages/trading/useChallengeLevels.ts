@@ -121,8 +121,8 @@ function buildLevel(
 
 const LEVEL_COLORS = {
   dailyLoss: "#f59e0b",
-  maxDrawdown: "#f6465d",
-  profitTarget: "#0ecb81",
+  maxDrawdown: "#f23645",
+  profitTarget: "#089981",
 } as const;
 
 function buildLevels(

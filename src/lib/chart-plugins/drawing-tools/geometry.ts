@@ -43,3 +43,13 @@ export function pointInBox(
   const maxY = Math.max(y1, y2) + tolerance;
   return p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY;
 }
+
+/**
+ * TradingView's dash pattern for a line style at a line width
+ * (computeDashPattern: dotted [w, 3w], dashed [5w, 6w]).
+ */
+export function tvDash(style: string | undefined, width: number): number[] {
+  if (style === "dotted") return [width, 3 * width];
+  if (style === "dashed") return [5 * width, 6 * width];
+  return [];
+}

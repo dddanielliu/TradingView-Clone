@@ -5,11 +5,11 @@ import type {
   useCandles,
   useJournalEntries,
 } from "../services/queries.ts";
-import type { Order, PlaceOrderInput, Position, Symbol } from "../services/schemas.ts";
+import type { Candle, Order, PlaceOrderInput, Position, Symbol } from "../services/schemas.ts";
 import type { useTradingStore } from "../services/store.tsx";
 import type { useChartPreferences } from "../hooks/useChartPreferences.ts";
 import type { DrawingLine, DrawingTool, Timeframe } from "../pages/trading/constants.ts";
-import type { useReplayChartData } from "../pages/trading/useReplayChartData.ts";
+import type { ReplayController } from "../replay/useReplay.ts";
 
 /**
  * The value `<TerminalProvider>` publishes and every panel consumes.
@@ -17,6 +17,17 @@ import type { useReplayChartData } from "../pages/trading/useReplayChartData.ts"
  * Kept apart from the provider so the provider file exports only a component,
  * which is what React Fast Refresh needs to hot-reload it.
  */
+
+export interface ReplayTradeEvent {
+  id: string;
+  type: "entry" | "exit" | "violation";
+  timestamp: string;
+  symbolName: string | null;
+  side: string | null;
+  price: number | null;
+  pnl: number | null;
+  ruleCode?: string;
+}
 
 type ConfirmOrderState =
   | (PlaceOrderInput & { _submit: () => Promise<unknown>; stopPrice?: number })
@@ -31,7 +42,6 @@ export interface TerminalContextValue {
   pipDigits: number;
   tick: { bid: number; ask: number; timestamp: number } | undefined;
   /** Every symbol's latest quote, for list views. */
-  ticks: Record<string, { bid: number; ask: number; timestamp: number }>;
   isDark: boolean;
 
   // Timeframe
@@ -41,9 +51,13 @@ export interface TerminalContextValue {
   // Chart data
   candles: ReturnType<typeof useCandles>["data"];
   liveCandle: ReturnType<typeof useTradingStore.getState>["liveCandleUpdates"][string] | undefined;
-  replayCandles: ReturnType<typeof useReplayChartData>["replayCandles"];
-  replayTradeEvents: ReturnType<typeof useReplayChartData>["replayTradeEvents"];
+  /** Bars up to the replay cursor while a replay runs, else null. */
+  replayCandles: Candle[] | null;
+  /** Entry/exit markers for the replay's paper trades. */
+  replayTradeEvents: ReplayTradeEvent[] | undefined;
   isReplaying: boolean;
+  /** Bar replay: picking a start bar, playback, and its paper account. */
+  replay: ReplayController;
 
   // Chart configuration
   chartPrefs: ReturnType<typeof useChartPreferences>;

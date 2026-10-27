@@ -1,17 +1,23 @@
 import type { IChartApi, ISeriesApi, Logical, SeriesOptionsMap, Time } from "lightweight-charts";
 import type { DrawingLine } from "../../../pages/trading/constants";
 import type { EntryState, ResolvedEntry, ResolvedFibLevel } from "./types";
+import { fromChartTime, toChartTime } from "../../chart-time.ts";
 
-export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
+// TradingView's visible fib retracement levels and their colours (FIB_LEVELS_TV).
+export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236] as const;
 export const FIB_EXT_LEVELS = [0, 0.618, 1, 1.618, 2.618] as const;
 export const FIB_COLORS = [
-  "#e91e63",
-  "#ff5722",
+  "#808080",
+  "#f23645",
   "#ff9800",
-  "#ffc107",
   "#4caf50",
-  "#2196F3",
+  "#089981",
+  "#00bcd4",
+  "#808080",
+  "#2962ff",
+  "#f23645",
   "#9c27b0",
+  "#e91e63",
 ];
 
 export type AnySeries = ISeriesApi<keyof SeriesOptionsMap>;
@@ -56,7 +62,9 @@ function lowerBound(data: readonly { time: Time }[], time: number): number {
  * between bars (cross-timeframe anchors) and extrapolation past either end of
  * the data (future anchors / unloaded history).
  */
-export function timeToX(ctx: ResolveCtx, time: number): number | null {
+export function timeToX(ctx: ResolveCtx, utcTime: number): number | null {
+  // Drawings keep real UTC times; the chart runs on local "chart time".
+  const time = toChartTime(utcTime);
   const ts = ctx.chart.timeScale();
   const direct = ts.timeToCoordinate(time as Time);
   if (direct !== null) return direct;
@@ -103,6 +111,11 @@ function timeToLogical(ctx: ResolveCtx, time: number): number | null {
  * whitespace beyond the loaded data so anchors can be placed in the future.
  */
 export function xToTime(ctx: ResolveCtx, x: number): number | null {
+  const t = xToChartTime(ctx, x);
+  return t === null ? null : fromChartTime(t);
+}
+
+function xToChartTime(ctx: ResolveCtx, x: number): number | null {
   const direct = ctx.chart.timeScale().coordinateToTime(x);
   if (direct !== null) return direct as number;
   const { data, intervalSec } = ctx;
@@ -133,9 +146,32 @@ export function resolveEntry(d: DrawingLine, ctx: ResolveCtx, state: EntryState)
   if (d.type === "fibonacci" || d.type === "fibextension") {
     entry.fibLevels = resolveFibLevels(d, ctx.series);
   }
+  if (d.points) {
+    entry.pts = [];
+    for (const p of d.points) {
+      const x = timeToX(ctx, p.time);
+      const y = ctx.series.priceToCoordinate(p.price);
+      if (x !== null && y !== null) entry.pts.push({ x, y });
+    }
+    // Sector: the third point is shown on the circle through the second.
+    const [s0, s1, s2] = entry.pts;
+    if (d.type === "sector" && s0 && s1 && s2) {
+      const r = Math.hypot(s1.x - s0.x, s1.y - s0.y);
+      const l = Math.hypot(s2.x - s0.x, s2.y - s0.y) || 1;
+      entry.pts[2] = { x: s0.x + ((s2.x - s0.x) / l) * r, y: s0.y + ((s2.y - s0.y) / l) * r };
+    }
+    // Trend angle keeps its screen angle and length (TradingView stores both):
+    // the second point is derived from the first.
+    const a = entry.pts[0];
+    if (d.type === "trendangle" && a && d.angle !== undefined && d.distance !== undefined) {
+      entry.pts[1] = { x: a.x + Math.cos(d.angle) * d.distance, y: a.y - Math.sin(d.angle) * d.distance };
+    }
+  }
   if (d.type === "trendline") {
     entry.seg = trendlineSegment(entry, ctx.chart.timeScale().width());
-    if (state === "selected" || state === "preview") entry.stats = trendlineStats(d, ctx);
+    // Off by default, like TradingView's trend line (showPriceRange,
+    // showBarsRange, showAngle … all false); the settings dialog turns it on.
+    if (d.showStats && (d.alwaysShowStats || state === "selected" || state === "preview")) entry.stats = trendlineStats(d, ctx);
   }
   if (d.type === "position") {
     entry.yStop = d.stopPrice != null ? ctx.series.priceToCoordinate(d.stopPrice) : null;
@@ -202,8 +238,9 @@ function resolveFibLevels(d: DrawingLine, series: AnySeries): ResolvedFibLevel[]
       level,
       price,
       y: series.priceToCoordinate(price),
-      color: FIB_COLORS[i] ?? "#2196F3",
-      label: `${level} (${formatter.format(price)})`,
+      color: FIB_COLORS[i] ?? "#2962ff",
+      // TradingView: "0.618(80,123.45)".
+      label: `${level}(${formatter.format(price)})`,
     };
   });
 }

@@ -38,6 +38,8 @@ export interface ResolvedEntry {
   /** Third anchor (parallel channel offset line). */
   x3?: number | null;
   y3?: number | null;
+  /** Brush stroke in pixels. */
+  pts?: { x: number; y: number }[];
   state: EntryState;
 }
 
@@ -45,6 +47,18 @@ export interface ResolvedEntry {
 export interface DrawCtxInfo {
   accountEquity: number;
   priceFormat: (price: number) => string;
+  /** The series' minimum price move (one tick). */
+  tickSize: number;
+  /** The series' bars, oldest first (times in unix seconds). */
+  bars: () => readonly { time: number; open: number; high: number; low: number; close: number; volume?: number }[];
+  /** Pane x of a bar time (extrapolated past the data edges), or null. */
+  timeToX: (time: number) => number | null;
+  /** Pane y of a price, or null. */
+  priceToY?: (price: number) => number | null;
+  /** Price at a pane y, or null. */
+  yToPrice?: (y: number) => number | null;
+  /** The pane's background colour. */
+  background?: string;
 }
 
 export type TimeKey = "time" | "time2" | "time3";
@@ -56,7 +70,14 @@ export type PriceKey = "price" | "price2" | "price3" | "stopPrice" | "targetPric
  */
 export type HitRegion =
   | { kind: "point"; timeKey: TimeKey | null; priceKey: PriceKey | null }
-  | { kind: "body" };
+  | { kind: "body" }
+  /** One anchor of a drawing kept as a point list (patterns, waves). */
+  | { kind: "vertex"; index: number }
+  /** Icon / emoji: a corner resizes (index 0–3), just outside one rotates. */
+  | { kind: "iconCorner"; index: number }
+  | { kind: "iconRotate"; index: number }
+  /** Image: a corner (0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right). */
+  | { kind: "imageCorner"; index: number };
 
 export interface Hit {
   id: string;
@@ -73,6 +94,10 @@ export interface DrawingCallbacks {
   onSelectionChange?: (ids: string[]) => void;
   /** Double-click on a drawing — open its settings dialog. */
   onRequestSettings?: (id: string) => void;
+  /** Open the in-place text editor on a text drawing (a table's cell row / column). */
+  onEditText?: (id: string, cell?: [number, number]) => void;
+  /** An Image drawing was placed: ask for the picture. */
+  onPickImage?: (id: string) => void;
   /** Right-click on a drawing — open a context menu at the given client coords. */
   onContextMenu?: (id: string, clientX: number, clientY: number) => void;
   /** Alt+T/H/F/R shortcut pressed — arm the given tool. */

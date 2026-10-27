@@ -88,7 +88,7 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       aria-checked={checked}
       onClick={() => onChange(!checked)}
       className={cn(
-        "inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-0 p-0 transition-colors",
+        "inline-flex h-5 w-9 shrink-0 cursor-default items-center rounded-full border-0 p-0 transition-colors",
         checked ? "bg-primary" : "bg-secondary",
       )}
     >
@@ -140,7 +140,7 @@ function ColorSwatch({
       type="color"
       value={value || fallback}
       onChange={(e) => onChange(e.target.value)}
-      className="h-6 w-8 cursor-pointer rounded-full border border-border bg-transparent p-0"
+      className="h-6 w-8 cursor-default rounded-full border border-border bg-transparent p-0"
     />
   );
 }

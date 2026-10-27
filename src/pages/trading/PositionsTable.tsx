@@ -80,7 +80,7 @@ export function PositionsTable({
         {positions.map((p) => (
           <tr
             key={p.id}
-            className={cn("hover:bg-secondary/30", onSelectSymbol ? "cursor-pointer" : undefined)}
+            className={cn("hover:bg-secondary/30", onSelectSymbol ? "cursor-default" : undefined)}
             onClick={() => onSelectSymbol?.(p.symbolName)}
             onKeyDown={(e) => {
               if (!onSelectSymbol) return;

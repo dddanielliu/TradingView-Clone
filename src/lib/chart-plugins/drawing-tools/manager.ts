@@ -1,5 +1,6 @@
-import type { IChartApi, ISeriesApi, SeriesType } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, Logical, SeriesType } from "lightweight-charts";
 import type {
+  CursorMode,
   DrawingLine,
   DrawingTool,
   DrawingType,
@@ -10,6 +11,41 @@ import { dist, type Pt, snapAngle } from "./geometry";
 import { hitTest } from "./hit-test";
 import { makeResolveCtx, type ResolveCtx, resolveEntry, timeToX, xToTime } from "./resolve";
 import type { DataPoint, DrawingCallbacks, Hit, ResolvedEntry } from "./types";
+import { uid } from "../../uid.ts";
+import { ANNOTATION_TOOLS, type AnnotationToolType } from "./annotationtools";
+import { pointToolSpec } from "./point-tools";
+import { DemonstrationPrimitive } from "./demonstration";
+import { MeasurePrimitive, type MeasurePoint } from "./measure";
+import { regressionFit } from "./linetools";
+import { volumeProfile } from "./measuretools";
+import { firstPatternPrice, lastPatternPrice } from "./barspattern";
+import { generateGhostBars, ghostSegmentSizes } from "./ghostfeed";
+import { alignGannIndex, alignGannPrice } from "./gann";
+import { DEFAULT_ICON_SIZE, iconSelection, onIconAssetLoaded } from "./icontools";
+
+// The pane cursor for each cursor tool (TradingView's pane--cursor-* classes:
+// dot and eraser are .cur images, demonstration and arrow the default arrow).
+const svgCursor = (svg: string, x: number, y: number) =>
+  `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${x} ${y}, default`;
+const DOT_CURSOR = svgCursor(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9"><circle cx="4.5" cy="4.5" r="3" fill="#000" stroke="#fff"/></svg>',
+  4,
+  4,
+);
+const ERASER_CURSOR = svgCursor(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><path d="M2.5 13.5l8-8 6 6-6 6h-3z" fill="#fff" stroke="#000"/><path d="M6.5 9.5l6 6" stroke="#000"/></svg>',
+  4,
+  16,
+);
+const CURSOR_FOR_MODE: Record<CursorMode, string> = {
+  cross: "crosshair",
+  dot: DOT_CURSOR,
+  arrow: "default",
+  demonstration: "default",
+};
+import { controlPoints } from "./shapetools";
+import { fromChartTime, toChartTime } from "../../chart-time.ts";
+import { defaultLevelOffset, defaultWidthBars, POSITION_DEFAULTS } from "./position-math";
 
 // Releasing the pointer farther than this from the first anchor commits the
 // drawing in one press-drag-release gesture (otherwise we wait for a second
@@ -29,13 +65,18 @@ const TOUCH_HIT_SCALE = 2;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_CANCEL_PX = 10;
 
-// TradingView keyboard shortcuts (Alt+key, matched on physical key code).
+// TradingView keyboard shortcuts, matched on physical key code: Alt+T/H/V/F,
+// and Alt+Shift+R for the rectangle (plain Alt+R resets the chart there).
 const TOOL_SHORTCUTS: Record<string, DrawingTool> = {
   KeyT: "trendline",
   KeyH: "horizontal",
+  KeyV: "vertical",
   KeyF: "fibonacci",
+  KeyJ: "horzray",
+  KeyC: "crossline",
+};
+const SHIFT_TOOL_SHORTCUTS: Record<string, DrawingTool> = {
   KeyR: "rectangle",
-  KeyM: "measure",
 };
 
 interface OhlcBar {
@@ -144,17 +185,27 @@ export class DrawingToolsManager {
   private timeframe: string;
 
   private tool: DrawingTool = "none";
+  private cursorMode: CursorMode = "cross";
+  private readonly demo = new DemonstrationPrimitive();
+  private offIconAsset: () => void = () => undefined;
+  private volumeSeries: ISeriesApi<SeriesType> | null = null;
   private drawings: DrawingLine[] = [];
   private placing: PlacingState | null = null;
+  /** Brush stroke in progress: its points and the last pixel sampled. */
+  private brush: { kind: "brush" | "highlighter"; pts: DataPoint[]; last: Pt } | null = null;
+  /** Pattern / wave being placed click by click: the points fixed so far. */
+  private multi: { tool: DrawingType; pts: DataPoint[] } | null = null;
   private drag: DragState | null = null;
   private selectedIds: string[] = [];
   private hoveredId: string | null = null;
   private magnetMode: MagnetMode = "none";
   private stayInMode = false;
   private longPress: { timer: number; id: string; startPos: Pt } | null = null;
-  // The measure tool is a throwaway gesture: its result lingers as a preview
-  // (never committed/persisted) until the next pointer-down or Escape.
-  private measureResult: DrawingLine | null = null;
+  // Measure is the crosshair's, not a drawing: never committed, never in the object tree.
+  private readonly measure = new MeasurePrimitive();
+  private resetMeasureLater = false;
+  /** The crosshair's own label colours while they are swapped for the measure's blue. */
+  private crossLabelColors: { horz: string; vert: string } | null = null;
   // Copy/paste clipboard (deep copies of the drawings copied with Ctrl/Cmd+C).
   private clipboard: DrawingLine[] = [];
   // Per-type style defaults new drawings inherit (set via the settings dialog).
@@ -171,6 +222,10 @@ export class DrawingToolsManager {
     this.primitive.setIntervalSec(opts.intervalSec);
     this.primitive.setAccountEquity(opts.accountEquity ?? 0);
     this.series.attachPrimitive(this.primitive);
+    this.series.attachPrimitive(this.demo);
+    this.series.attachPrimitive(this.measure);
+    this.offIconAsset = onIconAssetLoaded(() => this.primitive.setDrawings(this.drawings));
+    this.container.addEventListener("mouseleave", this.handleMouseLeave);
     this.container.addEventListener("mousedown", this.handleMouseDown, true);
     this.container.addEventListener("dblclick", this.handleDblClick);
     this.container.addEventListener("contextmenu", this.handleContextMenu);
@@ -198,7 +253,11 @@ export class DrawingToolsManager {
     window.removeEventListener("touchend", this.handleTouchEnd);
     window.removeEventListener("touchcancel", this.handleTouchEnd);
     window.removeEventListener("keydown", this.handleKeyDown);
+    this.container.removeEventListener("mouseleave", this.handleMouseLeave);
+    this.offIconAsset();
     try {
+      this.series.detachPrimitive(this.demo);
+      this.series.detachPrimitive(this.measure);
       this.series.detachPrimitive(this.primitive);
     } catch {
       /* chart already removed */
@@ -213,8 +272,22 @@ export class DrawingToolsManager {
     this.applyCursor(null);
   }
 
+  /** The cursor tool the chart returns to between drawings. */
+  setCursorMode(mode: CursorMode): void {
+    this.cursorMode = mode;
+    this.demo.setEnabled(mode === "demonstration");
+    this.applyCursor(null);
+  }
+
   setMagnetMode(mode: MagnetMode): void {
     this.magnetMode = mode;
+  }
+
+  /** The volume series, for the volume-based tools. */
+  setVolumeSeries(series: ISeriesApi<SeriesType> | null): void {
+    this.volumeSeries = series;
+    this.measure.setVolumeSeries(series);
+    this.primitive.setVolumeSeries(series);
   }
 
   setStyleDefaults(defaults: Record<string, Partial<DrawingLine>>): void {
@@ -287,62 +360,143 @@ export class DrawingToolsManager {
 
   private resolveAll(): ResolvedEntry[] {
     const ctx = this.ctx();
-    return this.drawings.map((d) => resolveEntry(d, ctx, "normal"));
+    // Hit tests see the selection state: some anchors exist only while selected.
+    return this.drawings.map((d) =>
+      resolveEntry(d, ctx, this.selectedIds.includes(d.id) ? "selected" : d.id === this.hoveredId ? "hovered" : "normal"),
+    );
   }
 
-  // Build a drawing, then merge the user's saved style default for its type
-  // (the measure gesture keeps its fixed look).
+  // Build a drawing, then merge the user's saved style default for its type.
   private makeNew(tool: DrawingTool, p1: DataPoint, p2: DataPoint): DrawingLine {
     const d = this.buildNew(tool, p1, p2);
-    if (tool === "measure") return d;
     const def = this.styleDefaults[d.type];
     return def ? { ...d, ...definedOnly(def) } : d;
   }
 
   private buildNew(tool: DrawingTool, p1: DataPoint, p2: DataPoint): DrawingLine {
     if (tool === "long-position" || tool === "short-position") {
-      return this.makePosition(tool === "long-position" ? "long" : "short", p1, p2);
+      return this.makePosition(tool === "long-position" ? "long" : "short", p1);
     }
     const base = {
-      id: crypto.randomUUID(),
-      color: tool === "trendline" ? "#2196F3" : "#f0b90b",
+      id: uid(),
+      // TradingView's line tools start in its blue at 2px.
+      color: "#2962ff",
+      width: 2,
       createdTf: this.timeframe,
     };
     if (tool === "horizontal") return { ...base, type: "horizontal", price: p1.price };
     if (tool === "vertical") return { ...base, type: "vertical", price: p1.price, time: p1.time };
     const two = { ...base, price: p1.price, time: p1.time, price2: p2.price, time2: p2.time };
     if (tool === "ray") return { ...two, type: "trendline", extendRight: true };
+    // TradingView's Info line: a trend line whose stats are always on.
+    if (tool === "infoline") return { ...two, type: "trendline", showStats: true, alwaysShowStats: true };
     if (tool === "extended")
       return { ...two, type: "trendline", extendLeft: true, extendRight: true };
-    if (tool === "measure")
-      return { ...two, type: "trendline", color: "#b2b5be", lineStyle: "dashed" };
     if (tool === "channel") {
       // Offset line defaults parallel and mirrored below so it's visible/draggable.
       return { ...two, type: "channel", time3: p1.time, price3: 2 * p1.price - p2.price };
     }
     if (tool === "text") return { ...two, type: "text", text: "Text" };
+    // Shapes start in TradingView's colours, filled at 20 %.
+    const shapeColor: Partial<Record<DrawingTool, string>> = { rectangle: "#9c27b0", ellipse: "#f23645", triangle: "#089981" };
+    const sc = shapeColor[tool];
+    if (sc) return { ...two, type: tool as DrawingType, color: sc, fillOpacity: 0.2 };
     return { ...two, type: tool as DrawingType };
   }
 
-  // Position tool: entry = first anchor price; the drag's release price becomes
-  // the target and the stop is mirrored 1:1 on the opposite side (draggable
-  // afterwards). Side only drives labelling/colour — risk math uses absolutes.
-  private makePosition(side: "long" | "short", p1: DataPoint, p2: DataPoint): DrawingLine {
-    const entry = p1.price;
-    const target = p2.price;
+  private makePoints(type: DrawingType, points: DataPoint[]): DrawingLine {
+    const first = points[0]!;
+    const last = points[points.length - 1]!;
+    const d: DrawingLine = {
+      id: "preview",
+      type,
+      width: 2,
+      color: pointToolSpec(type)!.color,
+      createdTf: this.timeframe,
+      time: first.time,
+      price: first.price,
+      time2: last.time,
+      price2: last.price,
+      points: points.map((p) => ({ time: p.time, price: p.price })),
+    };
+    const def = this.styleDefaults[type];
+    return { ...(def ? { ...d, ...definedOnly(def) } : d), id: uid() };
+  }
+
+  // TradingView's defaults: the brush in colorSkyBlue500 at 2px, the
+  // highlighter in colorRipeRed500Alpha20 at 20px.
+  private makeBrush(points: DataPoint[], kind: "brush" | "highlighter"): DrawingLine {
+    const first = points[0]!;
+    const last = points[points.length - 1]!;
+    const d: DrawingLine = {
+      id: uid(),
+      type: kind,
+      color: kind === "highlighter" ? "rgba(242, 54, 69, 0.2)" : "#00bcd4",
+      width: kind === "highlighter" ? 20 : 2,
+      createdTf: this.timeframe,
+      time: first.time,
+      price: first.price,
+      time2: last.time,
+      price2: last.price,
+      points: points.map((p) => ({ time: p.time, price: p.price })),
+    };
+    const def = this.styleDefaults[kind];
+    return def ? { ...d, ...definedOnly(def) } : d;
+  }
+
+  // Position tool, placed with one click like TradingView's: the entry is the
+  // clicked price; stop and target sit 20 % of the visible bars' price range
+  // away (whole ticks, so the ratio starts at 1) and the box spans
+  // max(3, 15 % of the visible bars). See position-math.ts.
+  private makePosition(side: "long" | "short", p1: DataPoint): DrawingLine {
+    const tick = this.tickSize();
+    const entry = Math.round(p1.price / tick) * tick;
+    const { range, visibleBars } = this.visiblePriceRange(entry);
+    const off = defaultLevelOffset(range, tick);
+    const long = side === "long";
     return {
-      id: crypto.randomUUID(),
+      id: uid(),
       type: "position",
       side,
-      color: side === "long" ? "#089981" : "#f23645",
+      color: long ? "#089981" : "#f23645",
       createdTf: this.timeframe,
       price: entry,
-      time: Math.min(p1.time, p2.time),
-      time2: Math.max(p1.time, p2.time),
-      targetPrice: target,
-      stopPrice: entry - (target - entry),
-      riskPct: 1,
+      time: p1.time,
+      time2: p1.time + defaultWidthBars(visibleBars) * this.intervalSec,
+      targetPrice: long ? entry + off : entry - off,
+      stopPrice: long ? entry - off : entry + off,
+      accountSize: POSITION_DEFAULTS.accountSize,
+      lotSize: POSITION_DEFAULTS.lotSize,
+      riskPct: POSITION_DEFAULTS.riskPct,
+      leverage: POSITION_DEFAULTS.leverage,
     };
+  }
+
+  private tickSize(): number {
+    const format = this.series.options().priceFormat;
+    return "minMove" in format && format.minMove ? format.minMove : 0.01;
+  }
+
+  /** High − low of the bars on screen, and how many bars fit the pane. */
+  private visiblePriceRange(fallbackPrice: number): { range: number; visibleBars: number } {
+    const ts = this.chart.timeScale();
+    const logical = ts.getVisibleLogicalRange();
+    const data = this.series.data();
+    let lo = Infinity;
+    let hi = -Infinity;
+    if (logical) {
+      const from = Math.max(0, Math.ceil(logical.from));
+      const to = Math.min(data.length - 1, Math.floor(logical.to));
+      for (let i = from; i <= to; i++) {
+        const bar = asOhlc(data[i]!);
+        if (!bar) continue;
+        lo = Math.min(lo, bar.low);
+        hi = Math.max(hi, bar.high);
+      }
+    }
+    const range = hi > lo ? hi - lo : Math.abs(fallbackPrice) * 0.02;
+    const visibleBars = logical ? logical.to - logical.from : 100;
+    return { range, visibleBars };
   }
 
   // ── Mouse handlers ─────────────────────────────────────────────────
@@ -351,7 +505,47 @@ export class DrawingToolsManager {
     if (e.button !== 0) return;
     const pos = this.eventPos(e);
     if (!pos) return;
-    this.clearMeasure();
+    // TradingView's pane mouse-down: a finished measure is cleared; Shift with
+    // the cursor arms Measure; then start a measure, or finish the open one.
+    if (this.measure.startPoint() && this.measure.endPoint()) this.clearMeasure();
+    if (e.shiftKey && this.tool === "none") {
+      const hit = hitTest(this.resolveAll(), pos);
+      if (!hit || this.selectedIds.length === 0) {
+        this.tool = "measure";
+        this.applyCursor(null);
+        this.cb.onSelectTool?.("measure");
+        if (this.selectedIds.length) this.select([]);
+      }
+    }
+    if (this.tool === "measure" && !this.measure.startPoint()) {
+      const p = this.measurePointAt(pos);
+      if (p) this.measure.startMeasuring(p);
+      return; // the chart still scrolls on a drag
+    }
+    if (this.measure.startPoint() && !this.measure.endPoint()) {
+      const p = this.measurePointAt(pos);
+      if (p) this.measure.finishMeasure(p);
+      this.resetMeasureLater = true;
+      return;
+    }
+    // Demonstration: Alt + drag leaves a fading trail instead of panning.
+    if (this.tool === "none" && this.cursorMode === "demonstration" && e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.demo.start(pos);
+      return;
+    }
+    // Eraser: a click on a drawing removes it; anywhere else the chart pans.
+    if (this.tool === "eraser") {
+      const hit = hitTest(this.resolveAll(), pos);
+      if (!hit) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.hoverHit(null);
+      this.select(this.selectedIds.filter((id) => id !== hit.id));
+      this.cb.onRemove(hit.id);
+      return;
+    }
     if (this.tool !== "none") {
       this.placementStart(pos, e);
       return;
@@ -359,8 +553,17 @@ export class DrawingToolsManager {
     this.selectionStart(pos, e, false);
   };
 
+  private handleMouseLeave = (): void => {
+    this.demo.setOrigin(null);
+  };
+
   private handleMouseMove = (e: MouseEvent): void => {
     const pos = this.eventPos(e);
+    this.resetMeasureIfRequired();
+    if (pos && this.measure.startPoint() && !this.measure.endPoint()) this.measure.setCurrent(this.measurePointAt(pos));
+    this.syncCrosshairLabels(pos);
+    this.demo.setOrigin(pos);
+    if (this.demo.isDrawing()) return;
     if (this.drag) {
       if (pos) this.dragMove(pos, e.shiftKey);
       return;
@@ -373,10 +576,15 @@ export class DrawingToolsManager {
       this.placingMove(pos, e.shiftKey);
       return;
     }
-    if (this.tool === "none") this.hoverHit(hitTest(this.resolveAll(), pos));
+    if (this.tool === "none" || this.tool === "eraser") this.hoverHit(hitTest(this.resolveAll(), pos));
   };
 
   private handleMouseUp = (e: MouseEvent): void => {
+    this.resetMeasureIfRequired();
+    if (this.demo.isDrawing()) {
+      this.demo.finish();
+      return;
+    }
     if (this.drag) {
       this.endDrag();
       return;
@@ -385,6 +593,14 @@ export class DrawingToolsManager {
   };
 
   private handleDblClick = (e: MouseEvent): void => {
+    // A double-click ends an open-ended tool (path, polyline, ghost feed);
+    // its second click added a duplicate point, dropped here.
+    if (this.multi) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.finishOpenEnded();
+      return;
+    }
     if (this.tool !== "none") return;
     const pos = this.eventPos(e);
     if (!pos) return;
@@ -393,10 +609,28 @@ export class DrawingToolsManager {
     e.preventDefault();
     e.stopPropagation();
     this.select([hit.id]);
+    const target = this.drawings.find((x) => x.id === hit.id);
+    if (target && ANNOTATION_TOOLS[target.type as AnnotationToolType]?.editsText) {
+      this.cb.onEditText?.(hit.id, target.type === "table" ? this.tableCellAt(target, pos) : undefined);
+      return;
+    }
     this.cb.onRequestSettings?.(hit.id);
   };
 
   private handleContextMenu = (e: MouseEvent): void => {
+    // A right-click while measuring cancels it and goes back to the cursor.
+    if (this.measure.startPoint()) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.clearMeasure();
+      this.resetMeasureLater = false;
+      if (this.tool === "measure") {
+        this.tool = "none";
+        this.applyCursor(null);
+        this.cb.onToolFinished();
+      }
+      return;
+    }
     const pos = this.eventPos(e);
     if (!pos) return;
     const hit = hitTest(this.resolveAll(), pos);
@@ -505,10 +739,10 @@ export class DrawingToolsManager {
     return false;
   }
 
-  /** Alt+T/H/F/R arms the matching drawing tool. */
+  /** Alt+T/H/V/F and Alt+Shift+R arm the matching drawing tool. */
   private handleToolShortcut(e: KeyboardEvent): boolean {
     if (!e.altKey || e.ctrlKey || e.metaKey) return false;
-    const tool = TOOL_SHORTCUTS[e.code];
+    const tool = (e.shiftKey ? SHIFT_TOOL_SHORTCUTS : TOOL_SHORTCUTS)[e.code];
     if (!tool) return false;
     e.preventDefault();
     this.cb.onSelectTool?.(tool);
@@ -571,10 +805,11 @@ export class DrawingToolsManager {
   private offsetCopy(d: DrawingLine, dt: number): DrawingLine {
     return {
       ...d,
-      id: crypto.randomUUID(),
+      id: uid(),
       time: d.time != null ? d.time + dt : undefined,
       time2: d.time2 != null ? d.time2 + dt : undefined,
       time3: d.time3 != null ? d.time3 + dt : undefined,
+      points: d.points?.map((p) => ({ ...p, time: p.time + dt })),
     };
   }
 
@@ -597,6 +832,10 @@ export class DrawingToolsManager {
 
   private handleEscape(): void {
     this.clearMeasure();
+    if (this.multi && pointToolSpec(this.multi.tool)?.points === 0 && this.multi.pts.length >= 2) {
+      this.finishOpenEnded();
+      return;
+    }
     if (this.tool !== "none") {
       this.tool = "none";
       this.cancelPlacement();
@@ -615,7 +854,41 @@ export class DrawingToolsManager {
     // Take the event over so the chart doesn't pan while drawing.
     e.preventDefault();
     e.stopPropagation();
-    if (this.tool === "horizontal" || this.tool === "vertical" || this.tool === "text") {
+    // Brush: press, drag the stroke, release (TradingView's freehand tool).
+    if (this.tool === "brush" || this.tool === "highlighter") {
+      const raw = this.toPoint(pos);
+      if (!raw) return;
+      this.brush = { kind: this.tool, pts: [raw], last: pos };
+      this.placing = { p1: raw, startX: pos.x, startY: pos.y };
+      return;
+    }
+    // Patterns and waves: a click per point, the next one following the
+    // cursor, done on the last (TradingView's pointsCount()).
+    if (pointToolSpec(this.tool)) {
+      if (!this.multi) {
+        this.multi = { tool: this.tool as DrawingType, pts: [pt] };
+        this.placing = { p1: pt, startX: pos.x, startY: pos.y };
+      } else {
+        this.multi.pts.push(this.shiftAligned(this.multi.tool, pt, this.multi.pts[0]!, e.shiftKey));
+      }
+      const { tool, pts } = this.multi;
+      const need = pointToolSpec(tool)!.points;
+      if (need > 0 && pts.length >= need) {
+        this.multi = null;
+        this.commitDrawing(this.makePoints(tool, [...pts, ...this.curveControls(tool, pts)]));
+        return;
+      }
+      this.primitive.setPreview(this.makePoints(tool, [...pts, pt]));
+      return;
+    }
+    // One-click tools: lines through a point, text, and TradingView's position tools.
+    if (
+      this.tool === "horizontal" ||
+      this.tool === "vertical" ||
+      this.tool === "text" ||
+      this.tool === "long-position" ||
+      this.tool === "short-position"
+    ) {
       this.commitDrawing(this.makeNew(this.tool, pt, pt));
       return;
     }
@@ -629,44 +902,102 @@ export class DrawingToolsManager {
 
   // Branches the measure tool (a throwaway readout) away from the persist path.
   private commitPlacement(p1: DataPoint, p2: DataPoint): void {
-    if (this.tool === "measure") {
-      this.finishMeasure(p1, p2);
-      return;
-    }
     this.commitDrawing(this.makeNew(this.tool, p1, p2));
   }
 
-  private finishMeasure(p1: DataPoint, p2: DataPoint): void {
-    this.placing = null;
-    this.measureResult = {
-      id: "measure",
-      type: "trendline",
-      color: "#b2b5be",
-      lineStyle: "dashed",
-      price: p1.price,
-      time: p1.time,
-      price2: p2.price,
-      time2: p2.time,
-    };
-    this.primitive.setPreview(this.measureResult);
-    this.tool = "none";
-    this.applyCursor(null);
-    this.cb.onToolFinished();
+  private clearMeasure(): void {
+    this.measure.clearMeasure();
+    this.syncCrosshairLabels(null);
   }
 
-  private clearMeasure(): void {
-    if (!this.measureResult) return;
-    this.measureResult = null;
-    this.primitive.setPreview(null);
+  /** The crosshair's point for measuring: its bar index, its price (magnet-aligned). */
+  private measurePointAt(pos: Pt): MeasurePoint | null {
+    const logical = this.chart.timeScale().coordinateToLogical(pos.x);
+    const price = this.series.coordinateToPrice(pos.y);
+    if (logical === null || price === null) return null;
+    const index = Math.round(logical);
+    if (this.magnetMode === "none") return { index, price };
+    const time = this.measure.timeAt(index);
+    const snapped = time === null ? null : this.magnetSnap({ time, price }, pos.y);
+    return { index, price: snapped?.price ?? price };
+  }
+
+  /**
+   * The measure's end labels are drawn over the crosshair's: while the
+   * crosshair sits on the end (always, until it is fixed) its axis labels
+   * show in the measure's blue.
+   */
+  private syncCrosshairLabels(pos: Pt | null): void {
+    const end = this.measure.endPoint();
+    const start = this.measure.startPoint();
+    let onEnd = false;
+    if (start && pos) {
+      if (!end) onEnd = true;
+      else {
+        const y = this.series.priceToCoordinate(end.price);
+        const x = this.chart.timeScale().logicalToCoordinate(end.index as Logical);
+        const here = this.measurePointAt(pos);
+        onEnd = y !== null && x !== null && here !== null && here.index === end.index && Math.abs(pos.y - y) < 1;
+      }
+    }
+    if (onEnd === (this.crossLabelColors !== null)) return;
+    const cross = this.chart.options().crosshair;
+    if (onEnd) {
+      this.crossLabelColors = { horz: cross.horzLine.labelBackgroundColor, vert: cross.vertLine.labelBackgroundColor };
+      this.chart.applyOptions({ crosshair: { horzLine: { labelBackgroundColor: "#2962ff" }, vertLine: { labelBackgroundColor: "#2962ff" } } });
+    } else if (this.crossLabelColors) {
+      const { horz, vert } = this.crossLabelColors;
+      this.crossLabelColors = null;
+      this.chart.applyOptions({ crosshair: { horzLine: { labelBackgroundColor: horz }, vertLine: { labelBackgroundColor: vert } } });
+    }
+  }
+
+  /** After a measure is finished the tool goes back to the cursor on the next move or click. */
+  private resetMeasureIfRequired(): void {
+    if (!this.resetMeasureLater) return;
+    this.resetMeasureLater = false;
+    if (this.tool === "measure") {
+      this.tool = "none";
+      this.applyCursor(null);
+      this.cb.onToolFinished();
+    }
   }
 
   private placingMove(pos: Pt, shiftKey: boolean): void {
+    if (this.multi) {
+      const raw = this.pointFor(pos, shiftKey, null);
+      const pt = raw && this.shiftAligned(this.multi.tool, raw, this.multi.pts[0]!, shiftKey);
+      if (pt) {
+        // Curves preview with their middle point(s) already placed (setLastPoint).
+        const placed = [...this.multi.pts, pt];
+        this.primitive.setPreview(this.makePoints(this.multi.tool, [...placed, ...this.curveControls(this.multi.tool, placed)]));
+      }
+      return;
+    }
+    if (this.brush) {
+      // Sample every 2px of travel.
+      if (dist(pos, this.brush.last) < 2) return;
+      const raw = this.toPoint(pos);
+      if (!raw) return;
+      this.brush.pts.push(raw);
+      this.brush.last = pos;
+      this.primitive.setPreview(this.makeBrush(this.brush.pts, this.brush.kind));
+      return;
+    }
     const pt = this.pointFor(pos, shiftKey, this.placementAnchorPx());
     if (!pt || !this.placing) return;
     this.primitive.setPreview(this.makeNew(this.tool, this.placing.p1, pt));
   }
 
   private maybeCommitPlacement(pos: Pt | null, shiftKey: boolean): void {
+    if (this.multi) return; // placed by clicks, not drags
+    if (this.brush) {
+      const { pts, kind } = this.brush;
+      this.brush = null;
+      if (pts.length >= 2) this.commitDrawing(this.makeBrush(pts, kind));
+      else this.cancelPlacement();
+      return;
+    }
     const placing = this.placing!;
     if (!pos || dist(pos, { x: placing.startX, y: placing.startY }) < DRAG_COMMIT_THRESHOLD_PX) {
       return;
@@ -675,12 +1006,28 @@ export class DrawingToolsManager {
     if (pt) this.commitPlacement(placing.p1, pt);
   }
 
-  private commitDrawing(d: DrawingLine): void {
+  private commitDrawing(raw: DrawingLine): void {
+    let d = raw.type === "signpost" ? this.withSignpostPosition(raw) : raw;
+    if (d.type === "trendangle") d = this.withScreenAngle(d);
+    if (d.type === "regression") d = this.withRegressionAnchors(d);
+    if (d.type === "frvp" || d.type === "avp") d = this.withProfileAnchors(d);
+    if (d.type === "anchoredvwap") d = this.withVwapAnchor(d);
+    if (d.type === "barspattern" && !d.pattern) d = this.withBarsPattern(d);
+    if (d.type === "ghostfeed" && !d.ghostBars) d = this.withGhostBars(d);
+    if (d.type === "gannsquare" && d.scaleRatio === undefined) d = { ...d, scaleRatio: this.chartScaleRatio() ?? undefined };
+    if (d.type === "icon" && d.icon === undefined) d = { ...d, icon: iconSelection.icon, iconSize: DEFAULT_ICON_SIZE, angle: Math.PI / 2 };
+    if (d.type === "emoji" && d.emoji === undefined) d = { ...d, emoji: iconSelection.emoji, iconSize: DEFAULT_ICON_SIZE, angle: Math.PI / 2 };
     this.placing = null;
     this.primitive.setPreview(null);
     this.drawings = [...this.drawings, d];
     this.primitive.setDrawings(this.drawings);
     this.cb.onAdd({ ...d });
+    if (d.type === "image" && !d.imageUrl) this.cb.onPickImage?.(d.id);
+    // TradingView opens its text editor as soon as a text tool lands.
+    if (ANNOTATION_TOOLS[d.type as AnnotationToolType]?.editsText) {
+      this.select([d.id]);
+      this.cb.onEditText?.(d.id, d.type === "table" ? [0, 0] : undefined);
+    }
     if (this.stayInMode && this.tool !== "none") return; // keep tool armed
     this.select([d.id]);
     this.tool = "none";
@@ -688,8 +1035,228 @@ export class DrawingToolsManager {
     this.cb.onToolFinished();
   }
 
+  /** Ghost feed: generate its bars, the average high−low being the chart's mean bar range (in ticks). */
+  private withGhostBars(d: DrawingLine): DrawingLine {
+    const idx = (d.points ?? []).map((p) => this.barIndex(p.time));
+    if (idx.some((i) => i === null)) return d;
+    const tick = this.tickSize();
+    const ranges = this.series
+      .data()
+      .map((b) => asOhlc(b))
+      .filter((b): b is OhlcBar => b !== null)
+      .map((b) => b.high - b.low);
+    const mean = ranges.length ? ranges.reduce((s, r) => s + r, 0) / ranges.length : tick;
+    const averageHL = d.averageHL ?? Math.round(mean / tick);
+    const variance = d.variance ?? 50;
+    return { ...d, averageHL, variance, ghostBars: generateGhostBars(ghostSegmentSizes(idx as number[]), averageHL * tick, variance) };
+  }
+
+  /**
+   * Bars pattern (addPoint / _preparePoint): copy the bars between the points,
+   * put the first point on the first bar's high (close outside Bars mode)
+   * raised 5% of the pane, and the second where the copy ends at 1:1.
+   */
+  private withBarsPattern(d: DrawingLine): DrawingLine {
+    const [p, q] = d.points ?? [];
+    if (!p || !q) return d;
+    const from = toChartTime(Math.min(p.time, q.time));
+    const to = toChartTime(Math.max(p.time, q.time));
+    const bars = this.series
+      .data()
+      .filter((b) => (b.time as number) >= from && (b.time as number) <= to)
+      .map((b) => ({ time: fromChartTime(b.time as number), bar: asOhlc(b) }))
+      .filter((x): x is { time: number; bar: OhlcBar } => x.bar !== null);
+    if (bars.length === 0) return d;
+    const pattern = bars.map(({ bar }) => [bar.open, bar.high, bar.low, bar.close] as [number, number, number, number]);
+    const mode = d.barsMode ?? "bars";
+    const anchor = mode === "bars" ? bars[0]!.bar.high : bars[0]!.bar.close;
+    const ya = this.series.priceToCoordinate(anchor);
+    const lifted = ya === null ? null : this.series.coordinateToPrice(ya - 0.05 * this.chart.paneSize().height);
+    const p0 = { time: bars[0]!.time, price: lifted ?? anchor };
+    const diff = lastPatternPrice(pattern, mode, false) - firstPatternPrice(pattern, mode, false);
+    const p1 = { time: bars[bars.length - 1]!.time, price: p0.price + diff };
+    return { ...d, pattern, points: [p0, p1], time: p0.time, price: p0.price, time2: p1.time, price2: p1.price };
+  }
+
+  /**
+   * Volume profiles: a fixed range's anchors sit on the range's high (first)
+   * and low (second); an anchored profile's on its POC.
+   */
+  private withProfileAnchors(d: DrawingLine): DrawingLine {
+    const [p, q] = d.points ?? [];
+    if (!p) return d;
+    const all = this.series.data().map((b) => ({ time: fromChartTime(b.time as number), bar: asOhlc(b), volume: (b as { volume?: number }).volume }));
+    const end = d.type === "frvp" ? q?.time ?? p.time : all[all.length - 1]?.time ?? p.time;
+    const from = Math.min(p.time, end);
+    const to = Math.max(p.time, end);
+    const volumes = new Map((this.volumeSeries?.data() ?? []).map((v) => [fromChartTime(v.time as number), (v as { value?: number }).value ?? 0]));
+    const range = all.filter((x) => x.time >= from && x.time <= to && x.bar).map((x) => ({ ...x.bar!, volume: volumes.get(x.time) ?? x.volume ?? 0 }));
+    const vp = volumeProfile(range);
+    if (!vp) return d;
+    if (d.type === "avp") return { ...d, points: [{ time: p.time, price: vp.pocPrice }], price: vp.pocPrice };
+    if (!q) return d;
+    const pts = [
+      { time: p.time, price: vp.hi },
+      { time: q.time, price: vp.lo },
+    ];
+    return { ...d, points: pts, price: vp.hi, price2: vp.lo };
+  }
+
+  /** Anchored VWAP: the anchor sits on the VWAP's first value (the anchor bar's hlc3). */
+  private withVwapAnchor(d: DrawingLine): DrawingLine {
+    const p = d.points?.[0];
+    if (!p) return d;
+    const time = toChartTime(p.time);
+    const bar = this.series.data().find((b) => (b.time as number) >= time);
+    const ohlc = bar ? asOhlc(bar) : null;
+    if (!ohlc) return d;
+    const price = (ohlc.high + ohlc.low + ohlc.close) / 3;
+    return { ...d, points: [{ time: fromChartTime(bar!.time as number), price }], time: fromChartTime(bar!.time as number), price };
+  }
+
+  /** Regression trend (_updateAnchorsPrice): its anchors sit on the base line's ends. */
+  private withRegressionAnchors(d: DrawingLine): DrawingLine {
+    const [p, q] = d.points ?? [];
+    if (!p || !q) return d;
+    const bars = this.series.data().map((b) => ({ time: fromChartTime(b.time as number), close: asOhlc(b)?.close ?? NaN })).filter((b) => !Number.isNaN(b.close));
+    const fit = regressionFit(bars, p.time, q.time);
+    if (!fit) return d;
+    const first = p.time <= q.time;
+    const pts = [
+      { time: p.time, price: first ? fit.start : fit.end },
+      { time: q.time, price: first ? fit.end : fit.start },
+    ];
+    return { ...d, points: pts, price: pts[0]!.price, price2: pts[1]!.price };
+  }
+
+  /** Trend angle (_calculateAngle): the angle and length between its points on screen. */
+  private withScreenAngle(d: DrawingLine): DrawingLine {
+    const [p, q] = d.points ?? [];
+    if (!p || !q) return d;
+    const ctx = this.ctx();
+    const x0 = timeToX(ctx, p.time);
+    const y0 = this.series.priceToCoordinate(p.price);
+    const x1 = timeToX(ctx, q.time);
+    const y1 = this.series.priceToCoordinate(q.price);
+    if (x0 === null || y0 === null || x1 === null || y1 === null) return d;
+    const distance = Math.hypot(x1 - x0, y1 - y0);
+    if (distance <= 0) return { ...d, angle: 0, distance: 0 };
+    let angle = Math.acos((x1 - x0) / distance);
+    if (y1 - y0 > 0) angle = -angle;
+    return { ...d, angle, distance };
+  }
+
+  /** A time's bar index (logical, rounded). */
+  private barIndex(time: number): number | null {
+    const x = timeToX(this.ctx(), time);
+    const l = x === null ? null : this.chart.timeScale().coordinateToLogical(x);
+    return l === null ? null : Math.round(l);
+  }
+
+  /** Price per bar that keeps a box square on screen (TradingView's scaleRatio). */
+  private chartScaleRatio(): number | null {
+    const a = this.series.coordinateToPrice(0);
+    const b = this.series.coordinateToPrice(100);
+    if (a === null || b === null || a === b) return null;
+    return this.chart.timeScale().options().barSpacing * (Math.abs(a - b) / 100);
+  }
+
+  /**
+   * Gann square (_correctPoint): the moved point's price follows the box's
+   * price-per-bar ratio from the other point, on the side the pointer is.
+   */
+  private gannRatioPoint(pt: DataPoint, other: DataPoint, ratio: number, moving: 0 | 1): DataPoint {
+    const i = this.barIndex(pt.time);
+    const j = this.barIndex(other.time);
+    if (i === null || j === null) return pt;
+    const di = moving === 1 ? i - j : j - i;
+    const up = pt.price - other.price > 0;
+    const right = i - j > 0;
+    let sign = (up && !right) || (!up && right) ? -1 : 1;
+    if (moving === 0) sign = -sign;
+    return { time: pt.time, price: other.price + sign * di * ratio };
+  }
+
+  /** Shift on a Gann box snaps to Gann increments from the other point. */
+  private shiftAligned(tool: DrawingType, pt: DataPoint, other: DataPoint, shiftKey: boolean): DataPoint {
+    if (tool === "gannsquare") {
+      // Placing a Gann square: the second point keeps the chart's current ratio.
+      const ratio = this.chartScaleRatio();
+      return ratio === null ? pt : this.gannRatioPoint(pt, other, ratio, 1);
+    }
+    if (!shiftKey || tool !== "gannbox") return pt;
+    const ts = this.chart.timeScale();
+    const ctx = this.ctx();
+    const xa = timeToX(ctx, pt.time);
+    const xb = timeToX(ctx, other.time);
+    const la = xa === null ? null : ts.coordinateToLogical(xa);
+    const lb = xb === null ? null : ts.coordinateToLogical(xb);
+    let time = pt.time;
+    if (la !== null && lb !== null) {
+      const x = ts.logicalToCoordinate(alignGannIndex(Math.round(la), Math.round(lb)) as Logical);
+      const t = x === null ? null : xToTime(ctx, x);
+      if (t !== null) time = t;
+    }
+    return { time, price: alignGannPrice(pt.price, other.price) };
+  }
+
+  /** The table cell under a pane point (120px columns, rows of 14 × 1.3 + 16). */
+  private tableCellAt(d: DrawingLine, pos: Pt): [number, number] {
+    const p = d.points?.[0];
+    const x0 = p ? timeToX(this.ctx(), p.time) : null;
+    const y0 = p ? this.series.priceToCoordinate(p.price) : null;
+    if (x0 === null || y0 === null) return [0, 0];
+    const rowH = Math.ceil((d.fontSize ?? 14) * 1.3) + 16;
+    const cells = d.cells ?? [["", "", ""], ["", "", ""], ["", "", ""]];
+    const r = Math.min(cells.length - 1, Math.max(0, Math.floor((pos.y - y0) / rowH)));
+    const c = Math.min((cells[0]?.length ?? 3) - 1, Math.max(0, Math.floor((pos.x - x0) / 120)));
+    return [r, c];
+  }
+
+  /** A signpost keeps where it was clicked as a percentage between its bar and the pane edge. */
+  private withSignpostPosition(d: DrawingLine): DrawingLine {
+    const p = d.points?.[0];
+    if (!p) return d;
+    const bar = this.candleAt(p.time);
+    const y = this.series.priceToCoordinate(p.price);
+    if (!bar || y === null) return { ...d, signpostPos: 50 };
+    const yHigh = this.series.priceToCoordinate(bar.high);
+    const yLow = this.series.priceToCoordinate(bar.low);
+    const H = this.chart.paneSize().height;
+    if (yHigh !== null && y <= yHigh) return { ...d, signpostPos: yHigh > 0 ? ((yHigh - y) / yHigh) * 100 : 0 };
+    if (yLow !== null && y >= yLow) return { ...d, signpostPos: H > yLow ? -((y - yLow) / (H - yLow)) * 100 : 0 };
+    return { ...d, signpostPos: 0 };
+  }
+
+  /** Curves get their control points as real anchors once both ends are placed. */
+  private curveControls(tool: string, pts: DataPoint[]): DataPoint[] {
+    if (pts.length < 2) return [];
+    const ctx = makeResolveCtx(this.chart, this.series, this.intervalSec);
+    const px = (p: DataPoint) => {
+      const x = timeToX(ctx, p.time);
+      const y = this.series.priceToCoordinate(p.price);
+      return x === null || y === null ? null : { x, y };
+    };
+    const a = px(pts[0]!);
+    const b = px(pts[1]!);
+    if (!a || !b) return [];
+    return controlPoints(tool, a, b)
+      .map((c) => this.toPoint(c))
+      .filter((c): c is DataPoint => c !== null);
+  }
+
+  private finishOpenEnded(): void {
+    const multi = this.multi!;
+    const pts = multi.pts.filter((p, i) => i === 0 || p.time !== multi.pts[i - 1]!.time || p.price !== multi.pts[i - 1]!.price);
+    this.multi = null;
+    if (pts.length >= 2) this.commitDrawing(this.makePoints(multi.tool, pts));
+    else this.cancelPlacement();
+  }
+
   private cancelPlacement(): void {
     this.placing = null;
+    this.brush = null;
+    this.multi = null;
     this.primitive.setPreview(null);
   }
 
@@ -781,6 +1348,98 @@ export class DrawingToolsManager {
   }
 
   private dragPoint(drag: DragState, pos: Pt, shiftKey: boolean): DrawingLine | null {
+    const region = drag.hit.region;
+    if (region.kind === "imageCorner") {
+      // LineToolImage.setPoint: the opposite corner stays; the size follows the
+      // pointer, keeping the picture's natural aspect.
+      const o = drag.origin;
+      const c = drag.originEntry.pts?.[0];
+      if (!c || !o.cssWidth || !o.cssHeight) return null;
+      const nw = o.naturalWidth ?? o.cssWidth;
+      const nh = o.naturalHeight ?? o.cssHeight;
+      const sx = region.index % 2 === 0 ? -1 : 1;
+      const sy = region.index < 2 ? -1 : 1;
+      const fixed = { x: c.x - (sx * o.cssWidth) / 2, y: c.y - (sy * o.cssHeight) / 2 };
+      const k = Math.max(Math.abs(fixed.x - pos.x) / nw, Math.abs(fixed.y - pos.y) / nh);
+      const cssWidth = Math.round(nw * k);
+      const cssHeight = Math.round(nh * k);
+      if (cssWidth < 1 || cssHeight < 1) return null;
+      const centre = this.toPoint({ x: fixed.x + (sx * cssWidth) / 2, y: fixed.y + (sy * cssHeight) / 2 });
+      if (!centre) return null;
+      return { ...o, cssWidth, cssHeight, points: [centre], time: centre.time, price: centre.price };
+    }
+    if (region.kind === "iconCorner" || region.kind === "iconRotate") {
+      // TradingView's LineToolSvgIconBase.setPoint, in pane pixels.
+      const c = drag.originEntry.pts?.[0];
+      if (!c) return null;
+      const start = { x: drag.startX, y: drag.startY };
+      const angle0 = drag.origin.angle ?? Math.PI / 2;
+      if (region.kind === "iconRotate") {
+        const turn = Math.atan2(pos.y - c.y, pos.x - c.x) - Math.atan2(start.y - c.y, start.x - c.x);
+        return { ...drag.origin, angle: angle0 + turn };
+      }
+      const len0 = Math.hypot(start.x - c.x, start.y - c.y) || 1;
+      const size0 = drag.origin.iconSize ?? DEFAULT_ICON_SIZE;
+      const iconSize = Math.max(20, (size0 * Math.hypot(pos.x - c.x, pos.y - c.y)) / len0);
+      // Dragged through the centre: the glyph turns over.
+      const flipped = start.y >= c.y !== pos.y >= c.y || start.x <= c.x !== pos.x <= c.x;
+      return { ...drag.origin, iconSize, angle: flipped ? angle0 + Math.PI : angle0 };
+    }
+    if (drag.hit.region.kind === "vertex") {
+      const raw = this.pointFor(pos, shiftKey, null);
+      const pts = drag.origin.points ? [...drag.origin.points] : null;
+      if (!raw || !pts) return null;
+      const index = drag.hit.region.index;
+      if (drag.origin.type === "gannbox" && pts.length === 2) {
+        // Corners 2 and 3 are (first time, second price) and (second time, first price).
+        const pt = this.shiftAligned("gannbox", raw, index % 2 === 0 ? pts[1]! : pts[0]!, shiftKey);
+        const [a, b] = pts as [DataPoint, DataPoint];
+        const next: [DataPoint, DataPoint] =
+          index === 0 ? [pt, b] : index === 1 ? [a, pt] : index === 2 ? [{ time: pt.time, price: a.price }, { time: b.time, price: pt.price }] : [{ time: a.time, price: pt.price }, { time: pt.time, price: b.price }];
+        return { ...drag.origin, points: next, time: next[0].time, price: next[0].price, time2: next[1].time, price2: next[1].price };
+      }
+      if (drag.origin.type === "gannsquare" && pts.length === 2 && index < 2) {
+        const other = pts[index === 0 ? 1 : 0]!;
+        const ratio = drag.origin.scaleRatio;
+        if (shiftKey && ratio) {
+          pts[index] = this.gannRatioPoint(raw, other, ratio, index as 0 | 1);
+          return { ...drag.origin, points: pts, time: pts[0]!.time, price: pts[0]!.price, time2: pts[1]!.time, price2: pts[1]!.price };
+        }
+        pts[index] = raw;
+        const i0 = this.barIndex(pts[0]!.time);
+        const i1 = this.barIndex(pts[1]!.time);
+        const scaleRatio = i0 !== null && i1 !== null && i0 !== i1 ? Math.abs((pts[1]!.price - pts[0]!.price) / (i1 - i0)) : drag.origin.scaleRatio;
+        return { ...drag.origin, scaleRatio, points: pts, time: pts[0]!.time, price: pts[0]!.price, time2: pts[1]!.time, price2: pts[1]!.price };
+      }
+      if (drag.origin.type === "barspattern" && pts.length === 2) {
+        // The second point stays right of the first (and vice versa) by a bar at least.
+        const other = pts[index === 0 ? 1 : 0]!;
+        const bar = this.intervalSec;
+        const time = index === 1 ? Math.max(raw.time, other.time + bar) : Math.min(raw.time, other.time - bar);
+        pts[index] = { time, price: raw.price };
+        return { ...drag.origin, points: pts, time: pts[0]!.time, price: pts[0]!.price, time2: pts[1]!.time, price2: pts[1]!.price };
+      }
+      if (drag.origin.type === "anchoredvwap") {
+        return this.withVwapAnchor({ ...drag.origin, points: [raw] });
+      }
+      if (drag.origin.type === "frvp" || drag.origin.type === "avp") {
+        pts[index] = raw;
+        return this.withProfileAnchors({ ...drag.origin, points: pts, time: pts[0]!.time, time2: pts[1]?.time });
+      }
+      if (drag.origin.type === "regression") {
+        pts[index] = raw;
+        return this.withRegressionAnchors({ ...drag.origin, points: pts, time: pts[0]!.time, time2: pts[1]!.time });
+      }
+      if (drag.origin.type === "trendangle" && index === 1) {
+        pts[1] = raw;
+        return this.withScreenAngle({ ...drag.origin, points: pts, time2: raw.time, price2: raw.price });
+      }
+      const pt = raw;
+      pts[drag.hit.region.index] = { time: pt.time, price: pt.price };
+      const first = pts[0]!;
+      const last = pts[pts.length - 1]!;
+      return { ...drag.origin, points: pts, time: first.time, price: first.price, time2: last.time, price2: last.price };
+    }
     if (drag.hit.region.kind !== "point") return null;
     const pt = this.pointFor(pos, shiftKey, this.dragAnchorPx(drag));
     if (!pt) return null;
@@ -808,11 +1467,34 @@ export class DrawingToolsManager {
       return p ? { ...origin, time: p.time } : null;
     }
     if (origin.type === "position") return this.shiftPosition(origin, entry, dx, dy);
+    if (origin.points) return this.shiftBrush(origin, entry, dx, dy);
     if (origin.type === "channel") return this.shiftChannel(origin, entry, dx, dy);
     const p1 = this.shiftPoint(entry.x1, entry.y1, dx, dy);
     const p2 = this.shiftPoint(entry.x2, entry.y2, dx, dy);
     if (!p1 || !p2) return null;
     return { ...origin, time: p1.time, price: p1.price, time2: p2.time, price2: p2.price };
+  }
+
+  // Body-drag a brush stroke: every point moves by the same pixels.
+  private shiftBrush(origin: DrawingLine, entry: ResolvedEntry, dx: number, dy: number): DrawingLine | null {
+    const pts = entry.pts;
+    if (!pts || !origin.points || pts.length !== origin.points.length) return null;
+    const moved: DataPoint[] = [];
+    for (const p of pts) {
+      const m = this.shiftPoint(p.x, p.y, dx, dy);
+      if (!m) return null;
+      moved.push(m);
+    }
+    const first = moved[0]!;
+    const last = moved[moved.length - 1]!;
+    return {
+      ...origin,
+      points: moved.map((p) => ({ time: p.time, price: p.price })),
+      time: first.time,
+      price: first.price,
+      time2: last.time,
+      price2: last.price,
+    };
   }
 
   // Body-drag a parallel channel: move all three anchors together.
@@ -847,11 +1529,14 @@ export class DrawingToolsManager {
     const p = this.shiftPoint(entry.x1, entry.y1, dx, dy);
     if (!p) return null;
     const dPrice = p.price - origin.price;
-    const dTime = p.time - (origin.time ?? p.time);
+    // Each edge moves by the same number of *bars*, through its own pixel
+    // position. Shifting the right edge by seconds instead lands it inside a
+    // session gap on stock charts, where it sticks while the left side moves.
+    const right = this.shiftPoint(entry.x2, entry.y1, dx, dy);
     return {
       ...origin,
-      time: (origin.time ?? 0) + dTime,
-      time2: (origin.time2 ?? 0) + dTime,
+      time: p.time,
+      time2: right ? right.time : origin.time2,
       price: p.price,
       stopPrice: origin.stopPrice != null ? origin.stopPrice + dPrice : undefined,
       targetPrice: origin.targetPrice != null ? origin.targetPrice + dPrice : undefined,
@@ -955,7 +1640,8 @@ export class DrawingToolsManager {
   }
 
   /** Binary search the series data for the bar at the given unix time. */
-  private candleAt(time: number): OhlcBar | null {
+  private candleAt(utcTime: number): OhlcBar | null {
+    const time = toChartTime(utcTime);
     const data = this.series.data();
     let lo = 0;
     let hi = data.length - 1;
@@ -994,7 +1680,7 @@ export class DrawingToolsManager {
       this.hoveredId = id;
       this.primitive.setHovered(id);
     }
-    this.applyCursor(hit ? "pointer" : null);
+    this.applyCursor(hit && this.tool !== "eraser" ? "pointer" : null);
   }
 
   private applyCursor(interactionCursor: "pointer" | "grabbing" | null): void {
@@ -1002,6 +1688,8 @@ export class DrawingToolsManager {
       this.container.style.cursor = interactionCursor;
       return;
     }
-    this.container.style.cursor = this.tool !== "none" ? "crosshair" : "";
+    if (this.tool === "eraser") this.container.style.cursor = ERASER_CURSOR;
+    else if (this.tool !== "none") this.container.style.cursor = "crosshair";
+    else this.container.style.cursor = CURSOR_FOR_MODE[this.cursorMode];
   }
 }

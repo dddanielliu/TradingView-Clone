@@ -1,3 +1,4 @@
+import { flipPattern, mirrorPattern } from "../../lib/chart-plugins/drawing-tools/barspattern.ts";
 import {
   Bell,
   ChevronsDown,
@@ -16,7 +17,6 @@ import { useDragOffset } from "../../hooks/useDragOffset.ts";
 import { FIB_EXT_LEVELS, FIB_LEVELS } from "../../lib/chart-plugins/drawing-tools/resolve.ts";
 import { cn } from "../../lib/utils.ts";
 import {
-  DRAWING_COLORS,
   DRAWING_WIDTHS,
   type DrawingLine,
   type DrawingLineStyle,
@@ -43,56 +43,6 @@ const LINE_STYLES: Array<{ style: DrawingLineStyle; dash: string }> = [
   { style: "dashed", dash: "6 4" },
   { style: "dotted", dash: "2 3" },
 ];
-
-function Divider() {
-  return <div className="h-4 border-l border-border mx-0.5" />;
-}
-
-function IconButton({
-  title,
-  active,
-  onClick,
-  children,
-}: {
-  title: string;
-  active?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      className={cn(
-        "p-1 rounded hover:bg-secondary",
-        active ? "text-primary bg-primary/15" : "text-muted-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ColorSwatches({ current, onPick }: { current: string; onPick: (color: string) => void }) {
-  return (
-    <div className="flex items-center gap-1">
-      {DRAWING_COLORS.map((c) => (
-        <button
-          key={c}
-          type="button"
-          title={c}
-          onClick={() => onPick(c)}
-          className={cn(
-            "h-4 w-4 rounded-full border",
-            current === c ? "ring-2 ring-primary border-transparent" : "border-border/60",
-          )}
-          style={{ backgroundColor: c }}
-        />
-      ))}
-    </div>
-  );
-}
 
 function WidthButtons({ current, onPick }: { current: number; onPick: (w: number) => void }) {
   return (
@@ -152,54 +102,6 @@ function LineStyleButtons({
   );
 }
 
-export function DrawingFloatingToolbar({
-  drawing,
-  onUpdate,
-  onClone,
-  onRemove,
-  onOpenSettings,
-}: DrawingToolbarProps) {
-  const patch = (p: Partial<DrawingLine>) => onUpdate({ ...drawing, ...p });
-  return (
-    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 px-2 py-1 rounded-lg bg-card border border-border shadow-xl">
-      <ColorSwatches current={drawing.color} onPick={(color) => patch({ color })} />
-      <Divider />
-      <WidthButtons current={drawing.width ?? 2} onPick={(width) => patch({ width })} />
-      <Divider />
-      <LineStyleButtons
-        current={drawing.lineStyle ?? "solid"}
-        onPick={(lineStyle) => patch({ lineStyle })}
-      />
-      <Divider />
-      <IconButton
-        title={drawing.locked ? "Unlock" : "Lock"}
-        active={drawing.locked}
-        onClick={() => patch({ locked: !drawing.locked })}
-      >
-        {drawing.locked ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
-      </IconButton>
-      {(drawing.type === "horizontal" || drawing.type === "trendline") && (
-        <IconButton
-          title={drawing.alertEnabled ? "Remove price alert" : "Add price alert"}
-          active={drawing.alertEnabled}
-          onClick={() => patch({ alertEnabled: !drawing.alertEnabled })}
-        >
-          <Bell className="h-3.5 w-3.5" />
-        </IconButton>
-      )}
-      <IconButton title="Clone" onClick={onClone}>
-        <Copy className="h-3.5 w-3.5" />
-      </IconButton>
-      <IconButton title="Settings" onClick={onOpenSettings}>
-        <Settings2 className="h-3.5 w-3.5" />
-      </IconButton>
-      <IconButton title="Delete (Del)" onClick={onRemove}>
-        <Trash2 className="h-3.5 w-3.5" />
-      </IconButton>
-    </div>
-  );
-}
-
 // ── Settings dialog (double-click a drawing or gear button) ──────────────────
 
 export interface DrawingSettingsProps {
@@ -230,7 +132,7 @@ function ExtendToggles({
   return (
     <SettingsRow label="Extend">
       <div className="flex items-center gap-3 text-xs">
-        <label className="flex items-center gap-1.5 cursor-pointer">
+        <label className="flex items-center gap-1.5 cursor-default">
           <input
             type="checkbox"
             checked={drawing.extendLeft ?? false}
@@ -238,7 +140,7 @@ function ExtendToggles({
           />
           Left
         </label>
-        <label className="flex items-center gap-1.5 cursor-pointer">
+        <label className="flex items-center gap-1.5 cursor-default">
           <input
             type="checkbox"
             checked={drawing.extendRight ?? false}
@@ -267,7 +169,7 @@ function FillControls({
           type="color"
           value={drawing.fillColor ?? drawing.color}
           onChange={(e) => patch({ fillColor: e.target.value })}
-          className="h-6 w-8 cursor-pointer bg-transparent border-0 p-0"
+          className="h-6 w-8 cursor-default bg-transparent border-0 p-0"
         />
         <input
           type="range"
@@ -293,7 +195,7 @@ function ArrowheadToggles({
   return (
     <SettingsRow label="Arrows">
       <div className="flex items-center gap-3 text-xs">
-        <label className="flex items-center gap-1.5 cursor-pointer">
+        <label className="flex items-center gap-1.5 cursor-default">
           <input
             type="checkbox"
             checked={drawing.arrowStart ?? false}
@@ -301,7 +203,7 @@ function ArrowheadToggles({
           />
           Start
         </label>
-        <label className="flex items-center gap-1.5 cursor-pointer">
+        <label className="flex items-center gap-1.5 cursor-default">
           <input
             type="checkbox"
             checked={drawing.arrowEnd ?? false}
@@ -430,7 +332,7 @@ function TextFormatBar({
         value={drawing.color}
         onChange={(e) => patch({ color: e.target.value })}
         title="Text color"
-        className="h-7 w-9 cursor-pointer rounded bg-transparent border border-border p-0.5"
+        className="h-7 w-9 cursor-default rounded bg-transparent border border-border p-0.5"
       />
       <select
         value={drawing.fontSize ?? 14}
@@ -481,7 +383,7 @@ function TextToggleRow({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <label className="flex flex-1 items-center gap-2 text-xs cursor-pointer">
+      <label className="flex flex-1 items-center gap-2 text-xs cursor-default">
         <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked)} />
         {label}
       </label>
@@ -489,7 +391,7 @@ function TextToggleRow({
         type="color"
         value={color || fallback}
         onChange={(e) => onColor(e.target.value)}
-        className="h-6 w-8 cursor-pointer rounded bg-transparent border border-border p-0.5"
+        className="h-6 w-8 cursor-default rounded bg-transparent border border-border p-0.5"
       />
     </div>
   );
@@ -552,7 +454,7 @@ function LineStyleSection({
           type="color"
           value={drawing.color}
           onChange={(e) => patch({ color: e.target.value })}
-          className="h-6 w-10 cursor-pointer bg-transparent border-0 p-0"
+          className="h-6 w-10 cursor-default bg-transparent border-0 p-0"
         />
       </SettingsRow>
       <SettingsRow label="Width">
@@ -565,6 +467,55 @@ function LineStyleSection({
         />
       </SettingsRow>
       {drawing.type === "trendline" && <ExtendToggles drawing={drawing} patch={patch} />}
+      {(drawing.type === "gannbox" || drawing.type === "fibspeedfan" || drawing.type === "gannsquare") && (
+        <SettingsRow label="">
+          <label className="flex items-center gap-1.5 text-xs cursor-default">
+            <input type="checkbox" checked={drawing.reverse ?? false} onChange={(e) => patch({ reverse: e.target.checked })} />
+            Reverse
+          </label>
+        </SettingsRow>
+      )}
+      {drawing.type === "barspattern" && (
+        <>
+          <SettingsRow label="Mode">
+            <select
+              className="rounded border border-border bg-background px-2 py-1 text-xs"
+              value={drawing.barsMode ?? "bars"}
+              onChange={(e) => patch({ barsMode: e.target.value as NonNullable<DrawingLine["barsMode"]> })}
+            >
+              <option value="bars">HL Bars</option>
+              <option value="openclose">OC Bars</option>
+              <option value="line">Line - close</option>
+              <option value="lineopen">Line - open</option>
+              <option value="linehigh">Line - high</option>
+              <option value="linelow">Line - low</option>
+              <option value="linehl2">Line - HL/2</option>
+            </select>
+          </SettingsRow>
+          <SettingsRow label="">
+            <label className="flex items-center gap-1.5 text-xs cursor-default">
+              <input type="checkbox" checked={drawing.mirrored ?? false} onChange={(e) => patch(mirrorBars(drawing, e.target.checked))} />
+              Mirrored
+            </label>
+            <label className="ml-3 flex items-center gap-1.5 text-xs cursor-default">
+              <input type="checkbox" checked={drawing.flipped ?? false} onChange={(e) => patch(flipBars(drawing, e.target.checked))} />
+              Flipped
+            </label>
+          </SettingsRow>
+        </>
+      )}
+      {drawing.type === "fibspiral" && (
+        <SettingsRow label="">
+          <label className="flex items-center gap-1.5 text-xs cursor-default">
+            <input
+              type="checkbox"
+              checked={drawing.counterclockwise ?? false}
+              onChange={(e) => patch({ counterclockwise: e.target.checked })}
+            />
+            Counterclockwise
+          </label>
+        </SettingsRow>
+      )}
       {(drawing.type === "trendline" || drawing.type === "arrow") && (
         <ArrowheadToggles drawing={drawing} patch={patch} />
       )}
@@ -701,7 +652,7 @@ export function DrawingSettingsDialog({
               onRemove();
               onClose();
             }}
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[#f6465d] hover:bg-[#f6465d]/10"
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[#f23645] hover:bg-[#f23645]/10"
           >
             <Trash2 className="h-3 w-3" />
             Delete
@@ -751,7 +702,7 @@ function MenuItem({
       onClick={onClick}
       className={cn(
         "flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-secondary text-left",
-        danger ? "text-[#f6465d]" : "text-foreground",
+        danger ? "text-[#f23645]" : "text-foreground",
       )}
     >
       <Icon className="h-3.5 w-3.5" />
@@ -814,4 +765,19 @@ export function DrawingContextMenu({
       </div>
     </>
   );
+}
+
+// Bars pattern Mirror / Flip (TradingView's _mirror / _flip): change the copy
+// and swap the two points' prices.
+function swapPrices(d: DrawingLine): Partial<DrawingLine> {
+  const [p, q] = d.points ?? [];
+  if (!p || !q) return {};
+  const points = [{ ...p, price: q.price }, { ...q, price: p.price }];
+  return { points, price: points[0]!.price, price2: points[1]!.price };
+}
+function mirrorBars(d: DrawingLine, mirrored: boolean): Partial<DrawingLine> {
+  return { mirrored, pattern: d.pattern && mirrorPattern(d.pattern), ...swapPrices(d) };
+}
+function flipBars(d: DrawingLine, flipped: boolean): Partial<DrawingLine> {
+  return { flipped, pattern: d.pattern && flipPattern(d.pattern), ...swapPrices(d) };
 }

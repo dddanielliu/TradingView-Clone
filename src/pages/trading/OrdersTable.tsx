@@ -54,7 +54,7 @@ export function OrdersTable({
           <tr
             key={o.id}
             className={
-              onSelectSymbol ? "hover:bg-secondary/30 cursor-pointer" : "hover:bg-secondary/30"
+              onSelectSymbol ? "hover:bg-secondary/30 cursor-default" : "hover:bg-secondary/30"
             }
             onClick={() => onSelectSymbol?.(o.symbolName)}
             onKeyDown={(e) => {

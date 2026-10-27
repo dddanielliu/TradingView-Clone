@@ -87,6 +87,55 @@ export interface MarketDataSource {
 
   /** Which symbols are on screen, so a feed can narrow its subscriptions. */
   setSymbolInterest?(symbols: string[]): void;
+
+  // ── Open-universe sources (optional) ──
+  // A source that can chart any instrument, rather than a fixed list,
+  // implements these. `getSymbols()` then returns the symbols resolved so far.
+
+  /** Search instruments by ticker or name; `type` narrows to stock, crypto, forex... */
+  searchSymbols?(query: string, type?: string): Promise<SymbolSearchResponse>;
+  /** Full metadata for one id (e.g. `NASDAQ:AAPL`), or null when nobody knows it. */
+  resolveSymbol?(symbol: string): Promise<Symbol | null>;
+  /** Last price and the day's change, for watchlists and symbol details. */
+  getQuoteStats?(symbol: string): Promise<QuoteStats | null>;
+  /** Fires when `getSymbols()` would return something new. */
+  onSymbolsChange?(handler: () => void): Unsubscribe;
+  /** Which underlying provider is serving a symbol now, for a status chip. */
+  getActiveProvider?(symbol: string): string | null;
+  onActiveProviderChange?(handler: () => void): Unsubscribe;
+}
+
+export interface SymbolSearchResult {
+  /** TradingView-style id, e.g. `NASDAQ:AAPL`. */
+  id: string;
+  symbol: string;
+  exchange: string;
+  description: string;
+  type: string;
+  currency?: string;
+  country?: string;
+  /** Which provider found it. */
+  provider: string;
+}
+
+export interface SymbolSearchResponse {
+  results: SymbolSearchResult[];
+  /** Providers that failed, as "provider: reason" — the others still answered. */
+  errors: string[];
+}
+
+export interface QuoteStats {
+  symbol: string;
+  last: number;
+  change: number;
+  changePct: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  prevClose?: number;
+  volume?: number;
+  provider: string;
+  delayed?: boolean;
 }
 
 /** Pushed by `trading.subscribe`. `entity` carries the full record when available. */

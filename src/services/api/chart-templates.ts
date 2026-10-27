@@ -1,4 +1,5 @@
 import { safeStorage } from "../../lib/safe-storage.ts";
+import { uid } from "../../lib/uid.ts";
 // Chart templates persist to localStorage in demo mode (no backend).
 
 export interface ChartTemplateContent {
@@ -38,7 +39,7 @@ export const chartTemplatesApi = {
   save: (name: string, content: ChartTemplateContent, isDefault = false) => {
     const list = readAll().filter((t) => t.name !== name);
     const template: ChartTemplate = {
-      id: crypto.randomUUID(),
+      id: uid(),
       name,
       layoutType: "SINGLE",
       isDefault,

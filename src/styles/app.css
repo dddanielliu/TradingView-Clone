@@ -16,7 +16,10 @@ body,
   overflow: hidden;
 }
 
+/* Matches the layout's gutter colour so there is no flash around it. */
 body {
-  /* Matches the terminal's background so there is no flash around it. */
-  background: #0a0b0e;
+  background: #ebebeb;
+}
+html.dark body {
+  background: #1a1a1a;
 }

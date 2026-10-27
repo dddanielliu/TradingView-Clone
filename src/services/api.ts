@@ -1,5 +1,10 @@
 import { getAdapter } from "../adapter/registry.ts";
-import type { OrderModification, PositionModification } from "../adapter/types.ts";
+import type {
+  OrderModification,
+  PositionModification,
+  QuoteStats,
+  SymbolSearchResponse,
+} from "../adapter/types.ts";
 import { uid } from "../lib/uid.ts";
 import type { DrawingLine } from "../pages/trading/constants.ts";
 import type { AccountMetricsResponse } from "./api/auth.ts";
@@ -10,7 +15,6 @@ import type {
   UpdateJournalEntryInput,
 } from "./api/journal.ts";
 import type { MarketDataCandlesPayload } from "./api/market-data.ts";
-import * as replay from "./replay.ts";
 import type { Account, Candle, Order, PlaceOrderInput, Position, Symbol } from "./schemas.ts";
 
 /**
@@ -212,6 +216,66 @@ export const api = {
   ): Promise<MarketDataCandlesPayload> =>
     api.getCandles(symbol, timeframe, limit, range).then(candlesPayload),
 
+  /**
+   * Search instruments. Sources with an open universe search their providers;
+   * a fixed-list source (the demo) is filtered locally.
+   */
+  searchSymbols: async (query: string, type?: string): Promise<SymbolSearchResponse> => {
+    const md = getAdapter().marketData;
+    if (md.searchSymbols) return md.searchSymbols(query, type);
+    const q = query.trim().toLowerCase();
+    const symbols = await md.getSymbols();
+    return {
+      errors: [],
+      results: symbols
+        .filter(
+          (s) =>
+            (!q || s.name.toLowerCase().includes(q) || (s.displayName ?? "").toLowerCase().includes(q)) &&
+            (!type || s.category.toLowerCase() === type.toLowerCase()),
+        )
+        .map((s) => ({
+          id: s.name,
+          symbol: s.name,
+          exchange: "",
+          description: s.displayName ?? s.name,
+          type: s.category.toLowerCase(),
+          provider: "demo",
+        })),
+    };
+  },
+
+  /** Metadata for one symbol id; also makes it appear in getSymbols(). */
+  resolveSymbol: async (symbol: string): Promise<Symbol | null> => {
+    const md = getAdapter().marketData;
+    if (md.resolveSymbol) return md.resolveSymbol(symbol);
+    return (await md.getSymbols()).find((s) => s.name === symbol) ?? null;
+  },
+
+  /** Last price and day change. Without provider stats, derived from daily bars. */
+  getQuoteStats: async (symbol: string): Promise<QuoteStats | null> => {
+    const md = getAdapter().marketData;
+    if (md.getQuoteStats) return md.getQuoteStats(symbol);
+    const bars = await md.getCandles({ symbol, timeframe: "1d", limit: 2 });
+    const today = bars[bars.length - 1];
+    if (!today) return null;
+    const quote = await md.getQuote?.(symbol);
+    const last = quote && quote.bid > 0 ? (quote.bid + quote.ask) / 2 : today.close;
+    const prevClose = bars.length > 1 ? bars[bars.length - 2]!.close : today.open;
+    const change = last - prevClose;
+    return {
+      symbol,
+      last,
+      change,
+      changePct: prevClose ? (change / prevClose) * 100 : 0,
+      open: today.open,
+      high: Math.max(today.high, last),
+      low: Math.min(today.low, last),
+      prevClose,
+      volume: today.volume,
+      provider: getAdapter().name ?? "adapter",
+    };
+  },
+
   getTick: async (symbol: string) => {
     const quote = await getAdapter().marketData.getQuote?.(symbol);
     return quote ?? { symbol, bid: 0, ask: 0, timestamp: Date.now() };
@@ -333,34 +397,4 @@ export const api = {
     return { success: true };
   },
 
-  // ── Session replay ──
-  // Built on top of `marketData.getCandles`, so replay works against any
-  // adapter rather than needing one of its own.
-  replayGetSession: (_accountId: string, sessionDate: string, symbol?: string) =>
-    replay.getSession(sessionDate, symbol),
-  replayStart: (_accountId: string, sessionDate: string, speed = 1, symbol?: string) =>
-    replay.start(sessionDate, speed, symbol),
-  replayPause: (_accountId: string, _sessionDate: string) => {
-    replay.pause();
-    return Promise.resolve({ success: true });
-  },
-  replayResume: (_accountId: string, _sessionDate: string) => {
-    replay.resume();
-    return Promise.resolve({ success: true });
-  },
-  replayStop: (_accountId: string, _sessionDate: string) => {
-    replay.stop();
-    return Promise.resolve({ success: true });
-  },
-  replaySetSpeed: (_accountId: string, _sessionDate: string, speed: number) =>
-    Promise.resolve(replay.setSpeed(speed)),
-  replaySeek: (_accountId: string, _sessionDate: string, timestamp: string) =>
-    Promise.resolve(replay.seek(timestamp)),
-  replayPatchSession: (
-    _accountId: string,
-    patch: { sessionDate?: string; cursorTimestamp?: number },
-  ) => {
-    replay.patchSession(patch);
-    return Promise.resolve({ success: true });
-  },
 };

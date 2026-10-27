@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { getAdapter, hasAdapter } from "../adapter/registry.ts";
 import { api } from "./api";
 import type { JournalEntriesResponse } from "./api/journal";
 import type { MarketDataCandlesPayload } from "./api/market-data";
@@ -33,9 +35,6 @@ export const queryKeys = {
     symbols: ["symbols"] as const,
     candles: (symbol: string, tf: string) => ["candles", symbol, tf] as const,
     economicCalendar: (currencies: string[]) => ["economicCalendar", ...currencies] as const,
-  },
-  replay: {
-    session: (accountId: string, date: string) => ["replay", "session", accountId, date] as const,
   },
 } as const;
 
@@ -84,6 +83,14 @@ export function useClosedPositions(accountId: string | null, page = 1) {
 }
 
 export function useSymbols() {
+  // Open-universe sources grow their symbol list as symbols are resolved.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!hasAdapter()) return;
+    return getAdapter().marketData.onSymbolsChange?.(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.market.symbols });
+    });
+  }, [queryClient]);
   return useQuery<Symbol[]>({
     queryKey: queryKeys.market.symbols,
     queryFn: () => api.getSymbols(),
@@ -124,17 +131,9 @@ export function useEconomicCalendar(currencies: string[]) {
   });
 }
 
-export function useCandles(
-  symbol: string,
-  timeframe: string,
-  limit?: number,
-  replayVersion?: number,
-) {
+export function useCandles(symbol: string, timeframe: string, limit?: number) {
   return useQuery<MarketDataCandlesPayload, Error, Candle[]>({
-    // Include replayVersion in the query key so each replay session forces a
-    // completely fresh query — React Query won't reuse structural sharing or
-    // stale cache from a previous replay / normal session.
-    queryKey: [...queryKeys.market.candles(symbol, timeframe), limit ?? "auto", replayVersion ?? 0],
+    queryKey: [...queryKeys.market.candles(symbol, timeframe), limit ?? "auto"],
     queryFn: () => api.getCandlesWithMeta(symbol, timeframe, limit),
     // Extract just the candles array for consumers — raw payload (with isPartial)
     // is still accessible via query.state.data inside refetchInterval below.
@@ -292,18 +291,3 @@ export function useDeleteJournalEntry() {
   });
 }
 
-export function useReplaySession(
-  accountId: string | null,
-  sessionDate: string | null,
-  symbol?: string,
-) {
-  return useQuery({
-    queryKey: [...queryKeys.replay.session(accountId!, sessionDate!), symbol ?? "auto"],
-    queryFn: () => api.replayGetSession(accountId!, sessionDate!, symbol),
-    enabled: !!accountId && !!sessionDate,
-    // 30s, not Infinity — replaying *today* a second time must pick up trades
-    // and candles recorded since the previous run.
-    staleTime: 30_000,
-    gcTime: 5 * 60 * 1000,
-  });
-}

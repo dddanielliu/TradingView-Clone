@@ -1,60 +1,61 @@
 // ── Trading Page Constants ────────────────────────────────────────────────────
 
-export const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"] as const;
-export type Timeframe = (typeof TIMEFRAMES)[number];
+import { STANDARD_TIMEFRAMES, timeframeSeconds, type Timeframe } from "../../market/timeframes.ts";
 
-/**
- * Master switch for session replay (HUD + scrubber). Backed by the demo replay
- * provider in services/demo/replay.ts: the buffer is the bundled 1m history for
- * the charted symbol and the transport state is broadcast on the same channel
- * the real backend used.
- */
-export const REPLAY_ENABLED = true;
+export type { Timeframe };
+export { isTimeframe } from "../../market/timeframes.ts";
+
+/** TradingView's standard interval menu: minutes, hours, then days and up. */
+export const TIMEFRAMES = STANDARD_TIMEFRAMES;
 
 export const CHART_COLORS = {
   dark: {
-    background: "#0b0e14",
-    text: "#9298a5",
-    grid: "#151923",
-    crosshair: "#555c68",
-    up: "#0ecb81",
-    down: "#f6465d",
-    volumeUp: "rgba(14, 203, 129, 0.18)",
-    volumeDown: "rgba(246, 70, 93, 0.18)",
-    bidLine: "#0ecb81",
-    askLine: "#f6465d",
-    bidLabelBg: "#0ecb81",
-    askLabelBg: "#f6465d",
+    // TradingView's dark chart theme: cold-gray-900 background, cold-gray-300
+    // scale text, cold-gray-100 grid at 20 %, cold-gray-400 crosshair.
+    background: "#000000",
+    text: "#b8b8b8",
+    grid: "rgba(242, 242, 242, 0.2)",
+    crosshair: "#9c9c9c",
+    up: "#089981",
+    down: "#f23645",
+    volumeUp: "rgba(8, 153, 129, 0.5)",
+    volumeDown: "rgba(242, 54, 69, 0.5)",
+    bidLine: "#089981",
+    askLine: "#f23645",
+    bidLabelBg: "#089981",
+    askLabelBg: "#f23645",
     watermark: "rgba(255, 255, 255, 0.03)",
-    lastPriceUp: "#0ecb81",
-    lastPriceDown: "#f6465d",
-    orderLine: "#f0b90b",
-    positionLong: "#0ecb81",
-    positionShort: "#f6465d",
-    tpLine: "#0ecb81",
-    slLine: "#f6465d",
+    lastPriceUp: "#089981",
+    lastPriceDown: "#f23645",
+    orderLine: "#2962ff",
+    positionLong: "#089981",
+    positionShort: "#f23645",
+    tpLine: "#089981",
+    slLine: "#f23645",
   },
   light: {
     background: "#ffffff",
-    text: "#5d6068",
-    grid: "#f0f2f5",
-    crosshair: "#999",
-    up: "#0ecb81",
-    down: "#f6465d",
-    volumeUp: "rgba(14, 203, 129, 0.25)",
-    volumeDown: "rgba(246, 70, 93, 0.25)",
-    bidLine: "#0ecb81",
-    askLine: "#f6465d",
-    bidLabelBg: "#0ecb81",
-    askLabelBg: "#f6465d",
+    // TradingView's light chart theme: cold-gray-900 scale text, cold-gray-800
+    // grid at 20 %, cold-gray-400 crosshair.
+    text: "#000000",
+    grid: "rgba(26, 26, 26, 0.2)",
+    crosshair: "#9c9c9c",
+    up: "#089981",
+    down: "#f23645",
+    volumeUp: "rgba(8, 153, 129, 0.5)",
+    volumeDown: "rgba(242, 54, 69, 0.5)",
+    bidLine: "#089981",
+    askLine: "#f23645",
+    bidLabelBg: "#089981",
+    askLabelBg: "#f23645",
     watermark: "rgba(0, 0, 0, 0.03)",
-    lastPriceUp: "#0ecb81",
-    lastPriceDown: "#f6465d",
-    orderLine: "#f0b90b",
-    positionLong: "#0ecb81",
-    positionShort: "#f6465d",
-    tpLine: "#0ecb81",
-    slLine: "#f6465d",
+    lastPriceUp: "#089981",
+    lastPriceDown: "#f23645",
+    orderLine: "#2962ff",
+    positionLong: "#089981",
+    positionShort: "#f23645",
+    tpLine: "#089981",
+    slLine: "#f23645",
   },
 };
 
@@ -113,8 +114,12 @@ export function mergeChartColors(theme: ChartColors, overrides: ChartColorOverri
  * "long-position"/"short-position" store a "position" with `side`; "measure" is
  * a transient gesture that never commits.
  */
+/** TradingView's cursor tools (the cursor group's first section). */
+export type CursorMode = "cross" | "dot" | "arrow" | "demonstration";
+
 export type DrawingTool =
   | "none"
+  | "eraser"
   | "trendline"
   | "horizontal"
   | "fibonacci"
@@ -131,12 +136,85 @@ export type DrawingTool =
   | "position"
   | "long-position"
   | "short-position"
+  | "brush"
+  | "xabcd"
+  | "cypher"
+  | "abcd"
+  | "headshoulders"
+  | "trianglepattern"
+  | "threedrives"
+  | "elliottimpulse"
+  | "elliottcorrection"
+  | "elliotttriangle"
+  | "elliottdouble"
+  | "elliotttriple"
+  | "infoline"
+  | "horzray"
+  | "crossline"
+  | "trendangle"
+  | "flatbottom"
+  | "disjointchannel"
+  | "regression"
+  | "pitchfork"
+  | "schiffpitchfork"
+  | "modschiffpitchfork"
+  | "insidepitchfork"
+  | "cycliclines"
+  | "timecycles"
+  | "sineline"
+  | "forecast"
+  | "barspattern"
+  | "ghostfeed"
+  | "sector"
+  | "anchoredvwap"
+  | "frvp"
+  | "avp"
+  | "pricerange"
+  | "daterange"
+  | "datepricerange"
+  | "arrowmarker"
+  | "arrowup"
+  | "arrowdown"
+  | "rotatedrect"
+  | "path"
+  | "circle"
+  | "polyline"
+  | "arc"
+  | "curve"
+  | "doublecurve"
+  | "textnote"
+  | "pricenote"
+  | "pin"
+  | "table"
+  | "callout"
+  | "comment"
+  | "pricelabel"
+  | "signpost"
+  | "flagmark"
+  | "image"
+  | "icon"
+  | "emoji"
+  | "highlighter"
+  | "fibextension3"
+  | "fibchannel"
+  | "fibtimezone"
+  | "fibspeedfan"
+  | "fibtime"
+  | "fibcircles"
+  | "fibspiral"
+  | "fibarcs"
+  | "fibwedge"
+  | "pitchfan"
+  | "gannbox"
+  | "gannfixed"
+  | "gannsquare"
+  | "gannfan"
   | "measure";
 
 /** Stored drawing kinds (excludes placement-only aliases). */
 export type DrawingType = Exclude<
   DrawingTool,
-  "none" | "ray" | "extended" | "long-position" | "short-position" | "measure"
+  "none" | "ray" | "extended" | "infoline" | "long-position" | "short-position" | "measure"
 >;
 
 export type DrawingLineStyle = "solid" | "dashed" | "dotted";
@@ -154,6 +232,11 @@ export interface DrawingLine {
   /** Third anchor — parallel-channel offset line. */
   price3?: number;
   time3?: number;
+  /**
+   * Brush, patterns and waves: every anchor, oldest first (time / price
+   * mirror the first, time2 / price2 the last).
+   */
+  points?: { time: number; price: number }[];
   color: string;
   // v2 style/behavior fields — all optional so v1 drawings load unchanged
   /** Line width in px (default 2). */
@@ -161,6 +244,41 @@ export interface DrawingLine {
   lineStyle?: DrawingLineStyle;
   /** Locked drawings can be selected but not moved or resized. */
   locked?: boolean;
+  /** Signpost: the label's height, percent of the way from the bar to the pane edge (negative: below). */
+  signpostPos?: number;
+  /** Image: the picture (a data URL) and its size on the chart in CSS px. */
+  imageUrl?: string;
+  cssWidth?: number;
+  cssHeight?: number;
+  /** Image: the picture's natural size (resizing keeps its aspect). */
+  naturalWidth?: number;
+  naturalHeight?: number;
+  /** Icon (a Font Awesome code point) / Emoji (the character), its size in px and angle (rad, π/2 upright). */
+  icon?: number;
+  emoji?: string;
+  iconSize?: number;
+  angle?: number;
+  /** Ghost feed: each leg's generated bars (price offsets), their average high−low and variance (%). */
+  ghostBars?: [number, number, number, number][][];
+  averageHL?: number;
+  variance?: number;
+  /** Bars pattern: the copied bars [open, high, low, close], how they draw, mirrored / flipped. */
+  pattern?: [number, number, number, number][];
+  barsMode?: "bars" | "openclose" | "line" | "lineopen" | "linehigh" | "linelow" | "linehl2";
+  mirrored?: boolean;
+  flipped?: boolean;
+  /** Trend angle: its length on screen (px); its angle is `angle`. */
+  distance?: number;
+  /** Gann square: the price-per-bar ratio its box keeps. */
+  scaleRatio?: number;
+  /** Gann box: measure the levels from the second point. */
+  reverse?: boolean;
+  /** Fib spiral: turn counterclockwise. */
+  counterclockwise?: boolean;
+  /** Table: cell texts, row by row. */
+  cells?: string[][];
+  /** Info line: the trend line's stats stay shown, not just while selected. */
+  alwaysShowStats?: boolean;
   /** Trendline only: extend the line to the pane edges. */
   extendLeft?: boolean;
   extendRight?: boolean;
@@ -187,11 +305,15 @@ export interface DrawingLine {
   bold?: boolean;
   italic?: boolean;
   /** Optional text-box background (text drawings). */
+  /** Colour of a line tool's text label (defaults to the line colour). */
+  textColor?: string;
   textBg?: boolean;
   textBgColor?: string;
   /** Optional text-box border (text drawings). */
   textBorder?: boolean;
   textBorderColor?: string;
+  /** Trend line Δprice / % / bars / angle readout (TradingView default off). */
+  showStats?: boolean;
   /** Custom fibonacci levels (fractions); defaults applied when absent. */
   fibLevels?: number[];
   // ── Position tool (long/short risk-reward) ──
@@ -200,8 +322,14 @@ export interface DrawingLine {
   stopPrice?: number;
   /** Take-profit price (position tool). */
   targetPrice?: number;
-  /** % of account equity risked — drives size/$ readout (default 1). */
+  /** % of the account risked (TradingView default 25). */
   riskPct?: number;
+  /** Position tool account size (TradingView default 1000). */
+  accountSize?: number;
+  /** Position tool lot size (default 1). */
+  lotSize?: number;
+  /** Position tool leverage cap on quantity (default 10 000). */
+  leverage?: number;
   // ── Price alerts on lines ──
   /** When set, the platform alerts when price crosses this line. */
   alertEnabled?: boolean;
@@ -210,10 +338,10 @@ export interface DrawingLine {
 
 /** Swatch palette for the floating drawing toolbar (TradingView-style). */
 export const DRAWING_COLORS = [
-  "#2196F3",
+  "#2962ff",
   "#f0b90b",
-  "#0ecb81",
-  "#f6465d",
+  "#089981",
+  "#f23645",
   "#9c27b0",
   "#ff9800",
   "#787b86",
@@ -222,17 +350,10 @@ export const DRAWING_COLORS = [
 
 export const DRAWING_WIDTHS = [1, 2, 3, 4] as const;
 
-/** Timeframe interval in milliseconds */
-export const TF_INTERVAL_MS: Record<Timeframe, number> = {
-  "1m": 60_000,
-  "5m": 5 * 60_000,
-  "15m": 15 * 60_000,
-  "30m": 30 * 60_000,
-  "1h": 60 * 60_000,
-  "4h": 4 * 60 * 60_000,
-  "1d": 24 * 60 * 60_000,
-  "1w": 7 * 24 * 60 * 60_000,
-};
+/** One bar of `tf` in milliseconds (months count as 30 days). */
+export function timeframeMs(tf: string): number {
+  return timeframeSeconds(tf) * 1000;
+}
 
 export const KNOWN_CURRENCIES = [
   "EUR",

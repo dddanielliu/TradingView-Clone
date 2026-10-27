@@ -37,12 +37,14 @@ import { toast } from "../services/toast.ts";
 import {
   type DrawingTool,
   type MagnetMode,
-  TIMEFRAMES,
+  isTimeframe,
   type Timeframe,
 } from "../pages/trading/constants.ts";
-import { useReplayChartData } from "../pages/trading/useReplayChartData.ts";
-import { useReplayPlayback } from "../pages/trading/useReplayPlayback.ts";
 import { getPipDigits } from "../pages/trading/utils.ts";
+import type { ClosedTrade } from "../replay/paper.ts";
+import { useReplay } from "../replay/useReplay.ts";
+import { readChartUrl, writeLastSymbol } from "../routing.ts";
+import type { ReplayTradeEvent } from "./use-terminal.ts";
 
 /**
  * Shared terminal state.
@@ -61,10 +63,43 @@ type ConfirmOrderState =
   | (PlaceOrderInput & { _submit: () => Promise<unknown>; stopPrice?: number })
   | null;
 
+/** Chart position ids for the replay's paper positions: `replay:<ticket>`. */
+const REPLAY_POSITION_PREFIX = "replay:";
+
+const CLOSE_LABEL: Record<string, string> = { sl: "Stop loss", tp: "Take profit" };
+
+function notifyReplayCloses(trades: ClosedTrade[]): void {
+  for (const t of trades) {
+    const pnl = `${t.pnl >= 0 ? "+" : "−"}${Math.abs(t.pnl).toFixed(2)}`;
+    const title = `${CLOSE_LABEL[t.reason] ?? "Closed"} hit`;
+    const detail = `${t.side === "BUY" ? "Long" : "Short"} ${t.volume} closed at ${t.exitPrice} (${pnl})`;
+    if (t.pnl >= 0) toast.success(title, detail);
+    else toast.warning(title, detail);
+  }
+}
+
+/** Entry and exit markers for the replay's trades that lie inside the bars shown. */
+function replayMarkers(snap: NonNullable<ReturnType<typeof useReplay>["snapshot"]>): ReplayTradeEvent[] {
+  const { firstTime, cursorTime, symbol } = snap.state;
+  const iso = (sec: number) => new Date(sec * 1000).toISOString();
+  const out: ReplayTradeEvent[] = [];
+  for (const t of snap.trades) {
+    if (t.symbol !== symbol || t.exitTime < firstTime || t.entryTime > cursorTime) continue;
+    out.push(
+      { id: `e${t.ticket}`, type: "entry", timestamp: iso(t.entryTime), symbolName: t.symbol, side: t.side, price: t.entryPrice, pnl: null },
+      { id: `x${t.ticket}`, type: "exit", timestamp: iso(t.exitTime), symbolName: t.symbol, side: t.side, price: t.exitPrice, pnl: t.pnl },
+    );
+  }
+  for (const p of snap.positions) {
+    out.push({ id: `e${p.ticket}`, type: "entry", timestamp: iso(p.time), symbolName: p.symbol, side: p.side, price: p.priceOpen, pnl: null });
+  }
+  return out;
+}
+
 /** Stored timeframe for a symbol, or the 15m default. */
 function readStoredTimeframe(symbol: string): Timeframe {
   const saved = safeStorage.getItem(`tf_${symbol}`);
-  return saved && TIMEFRAMES.includes(saved as Timeframe) ? (saved as Timeframe) : "15m";
+  return isTimeframe(saved) ? saved : "15m";
 }
 
 function getErrorMessage(err: unknown): string {
@@ -102,19 +137,20 @@ function deepLimitFor(timeframe: Timeframe): number {
 export function TerminalProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
-  const {
-    selectedSymbol,
-    setSelectedSymbol,
-    ticks,
-    updateTick,
-    activeAccountId,
-    replayVersion,
-    isReplaying,
-  } = useTradingStore();
+  // Field by field: subscribing to the whole store re-rendered the terminal
+  // (and everything under it) on every tick of every symbol.
+  const selectedSymbol = useTradingStore((s) => s.selectedSymbol);
+  const setSelectedSymbol = useTradingStore((s) => s.setSelectedSymbol);
+  const updateTick = useTradingStore((s) => s.updateTick);
+  const activeAccountId = useTradingStore((s) => s.activeAccountId);
 
   // ── Timeframe, held per symbol so switching reads the stored one in render
+  // The URL's ?interval= applies to the symbol the page opened on.
   const [timeframeBySymbol, setTimeframeBySymbol] = useState<Partial<Record<string, Timeframe>>>(
-    {},
+    () => {
+      const url = readChartUrl();
+      return url.timeframe ? { [selectedSymbol]: url.timeframe } : {};
+    },
   );
   const timeframe: Timeframe =
     timeframeBySymbol[selectedSymbol] ?? readStoredTimeframe(selectedSymbol);
@@ -125,6 +161,11 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     },
     [selectedSymbol],
   );
+
+  // A bare /chart/ reopens the last symbol, as TradingView does.
+  useEffect(() => {
+    writeLastSymbol(selectedSymbol);
+  }, [selectedSymbol]);
 
   // ── Chart configuration
   const chartPrefs = useChartPreferences();
@@ -196,6 +237,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
 
   const { data: symbols = [] } = useSymbols();
   const isFeedConnected = useIsFeedConnected();
+  const symbolInfo = symbols.find((s) => s.name === selectedSymbol) as Symbol | undefined;
 
   // Prime the active symbol with a fresh snapshot on switch so bid/ask appears
   // without waiting for the next tick.
@@ -242,7 +284,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     [invalidateTrading],
   );
 
-  const modifyPositionLevels = useCallback(
+  const modifyLivePositionLevels = useCallback(
     async (positionId: string, mods: { takeProfit?: number | null; stopLoss?: number | null }) => {
       if (!isFeedConnected) {
         toast.warning(
@@ -301,9 +343,61 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [chartKey]);
 
-  const { data: candles = [] } = useCandles(selectedSymbol, timeframe, candleLimit, replayVersion);
-  const { replayCandles, replayTradeEvents } = useReplayChartData(activeAccountId);
-  useReplayPlayback(activeAccountId ?? "");
+  const candlesQuery = useCandles(selectedSymbol, timeframe, candleLimit);
+  const candles = useMemo(() => candlesQuery.data ?? [], [candlesQuery.data]);
+  // While a new timeframe loads, the query shows the previous one's bars as a
+  // placeholder; the replay must never rebase onto those.
+  const confirmedCandles =
+    candlesQuery.isPlaceholderData || candles.length === 0 ? null : candles;
+
+  // ── Bar replay (browser-only, CheapTrader-style paper account)
+  const replay = useReplay({
+    symbol: selectedSymbol,
+    timeframe,
+    candles: confirmedCandles,
+    contractSize: symbolInfo?.contractSize || 1,
+    onClosed: notifyReplayCloses,
+  });
+  const isReplaying = replay.mode === "running";
+  const replayCandles = replay.snapshot?.candles ?? null;
+  const replayTradeEvents = useMemo(
+    () => (replay.snapshot ? replayMarkers(replay.snapshot) : undefined),
+    [replay.snapshot],
+  );
+  const replayPositions = useMemo<Position[]>(
+    () =>
+      (replay.snapshot?.positions ?? []).map((p) => ({
+        id: `${REPLAY_POSITION_PREFIX}${p.ticket}`,
+        accountId: "replay",
+        symbolName: p.symbol,
+        side: p.side === "BUY" ? "LONG" : "SHORT",
+        quantity: p.volume,
+        entryPrice: p.priceOpen,
+        currentPrice: replay.snapshot?.price,
+        unrealizedPnl: p.pnl,
+        margin: 0,
+        contractSize: p.contractSize,
+        openedAt: new Date(p.time * 1000).toISOString(),
+        takeProfit: p.tp || null,
+        stopLoss: p.sl || null,
+      })),
+    [replay.snapshot],
+  );
+
+  // SL/TP drags on the chart reach the paper account while replaying.
+  const replayModify = replay.modifyPosition;
+  const modifyPositionLevels = useCallback(
+    async (positionId: string, mods: { takeProfit?: number | null; stopLoss?: number | null }) => {
+      if (!positionId.startsWith(REPLAY_POSITION_PREFIX)) {
+        await modifyLivePositionLevels(positionId, mods);
+        return;
+      }
+      const ticket = Number(positionId.slice(REPLAY_POSITION_PREFIX.length));
+      const r = replayModify(ticket, mods.stopLoss, mods.takeProfit);
+      if (!r.ok) toast.error("Modify Failed", r.error);
+    },
+    [modifyLivePositionLevels, replayModify],
+  );
 
   const { data: positions = [] } = usePositions(activeAccountId);
   const { data: orders = [] } = useOrders(activeAccountId);
@@ -311,8 +405,13 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     () => positions.reduce((sum, position) => sum + (position.unrealizedPnl || 0), 0),
     [positions],
   );
-  const chartPositions = chartPrefs.overlayPositionsOnChart ? positions : [];
-  const chartOrders = chartPrefs.overlayPositionsOnChart ? orders : [];
+  // In replay the chart shows the paper account's positions, not the live ones.
+  const chartPositions = !chartPrefs.overlayPositionsOnChart
+    ? []
+    : isReplaying
+      ? replayPositions
+      : positions;
+  const chartOrders = chartPrefs.overlayPositionsOnChart && !isReplaying ? orders : [];
 
   const { data: journalData, isLoading: journalLoading } = useJournalEntries(activeAccountId);
   const createJournalMutation = useCreateJournalEntry();
@@ -413,8 +512,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
   const account = useTradingStore((s) => s.accounts.find((a) => a.id === activeAccountId));
   const liveCandleUpdates = useTradingStore((s) => s.liveCandleUpdates);
   const liveCandle = liveCandleUpdates[chartKey];
-  const tick = ticks[selectedSymbol];
-  const symbolInfo = symbols.find((s) => s.name === selectedSymbol) as Symbol | undefined;
+  const tick = useTradingStore((s) => s.ticks[selectedSymbol]);
   const pipDigits = useMemo(
     () => getPipDigits(symbolInfo, selectedSymbol),
     [symbolInfo, selectedSymbol],
@@ -431,7 +529,6 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     symbolInfo,
     pipDigits,
     tick,
-    ticks,
     isDark,
 
     timeframe,
@@ -442,6 +539,7 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     replayCandles,
     replayTradeEvents,
     isReplaying,
+    replay,
 
     chartPrefs,
     activeIndicators,

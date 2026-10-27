@@ -2,6 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { safeSession } from "./lib/safe-storage.ts";
 import { Root } from "./Root.tsx";
+import { ensureChartPath } from "./routing.ts";
+import "./hooks/useTheme.ts";
 import "./styles/global.css";
 import "./styles/app.css";
 
@@ -43,6 +45,9 @@ function handleChunkLoadError(event: ErrorEvent | PromiseRejectionEvent) {
 
 window.addEventListener("error", handleChunkLoadError);
 window.addEventListener("unhandledrejection", handleChunkLoadError);
+
+// The app lives at /chart/?symbol=…&interval=…, like TradingView.
+ensureChartPath();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -35,6 +35,20 @@ export const DEMO_SYMBOLS: Symbol[] = [
 
 export const DEMO_SYMBOL_NAMES = DEMO_SYMBOLS.map((s) => s.name);
 
+/**
+ * Instruments added at runtime by a live market-data source (any symbol the
+ * trader opens), so the paper engine can trade them like the bundled ones.
+ */
+const runtimeSymbols = new Map<string, Symbol>();
+
+export function registerSymbol(symbol: Symbol): void {
+  runtimeSymbols.set(symbol.name, symbol);
+}
+
+export function getRegisteredSymbols(): Symbol[] {
+  return [...runtimeSymbols.values()];
+}
+
 export function getDemoSymbol(name: string): Symbol | undefined {
-  return DEMO_SYMBOLS.find((s) => s.name === name);
+  return DEMO_SYMBOLS.find((s) => s.name === name) ?? runtimeSymbols.get(name);
 }

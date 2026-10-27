@@ -1,15 +1,6 @@
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Bell,
-  ClipboardCopy,
-  ListTree,
-  RotateCcw,
-  Settings,
-  Trash2,
-} from "lucide-react";
+import { AlarmClockPlus, ChevronDown, ChevronUp, Settings, SquarePlus } from "lucide-react";
+import { notAvailable } from "../chart/notAvailable.ts";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { cn } from "../../lib/utils.ts";
 
 // ── Chart context menu (TradingView-style right-click menu) ──────────────────
 // Rendered by ChartPanel at the cursor position when the user right-clicks
@@ -26,7 +17,8 @@ export interface ChartContextMenuProps {
   drawingsCount: number;
   indicatorsCount: number;
   onClose: () => void;
-  onResetView: () => void;
+  /** Kept for callers; TradingView resets the view with Alt + R, not from this menu. */
+  onResetView?: () => void;
   onCopyPrice: (price: number) => void;
   onAddAlert?: (price: number) => void;
   onQuickOrder?: (side: "BUY" | "SELL", type: "LIMIT" | "STOP", price: number) => void;
@@ -39,32 +31,29 @@ export interface ChartContextMenuProps {
 function MenuItem({
   icon,
   label,
+  hint,
   onClick,
-  danger = false,
 }: {
   icon?: ReactNode;
   label: string;
+  hint?: string;
   onClick: () => void;
-  danger?: boolean;
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-xs transition-colors",
-        danger ? "text-red-400 hover:bg-red-500/10" : "text-foreground hover:bg-secondary",
-      )}
+      className="flex h-8 w-full items-center pl-2 pr-[10px] text-left text-[14px] text-foreground hover:bg-secondary"
     >
-      <span className="flex h-3.5 w-3.5 items-center justify-center text-muted-foreground">
-        {icon}
-      </span>
+      <span className="mr-[6px] flex w-[28px] shrink-0 items-center justify-center">{icon}</span>
       <span className="flex-1 truncate">{label}</span>
+      {hint && <span className="ml-[58px] mr-[5px] shrink-0 text-[12px] text-muted-foreground">{hint}</span>}
     </button>
   );
 }
 
 function Separator() {
-  return <div className="my-1 border-t border-border" />;
+  return <div className="my-[6px] border-t border-border" />;
 }
 
 /** A resting order below the ask buys cheaper (limit); above it is a breakout stop. */
@@ -90,12 +79,15 @@ function TradeSection({
   "pipDigits" | "symbol" | "tick" | "onQuickOrder" | "onAddAlert" | "onClose"
 > & { price: number }) {
   const p = price.toFixed(pipDigits);
+  const ticker = symbol.slice(symbol.indexOf(":") + 1);
+  const ico = "h-[18px] w-[18px]";
   return (
     <>
       {onAddAlert && (
         <MenuItem
-          icon={<Bell className="h-3.5 w-3.5" />}
-          label={`Add alert on ${symbol} at ${p}`}
+          icon={<AlarmClockPlus className={ico} strokeWidth={1.25} />}
+          label={`Add alert on ${ticker} at ${p}…`}
+          hint="Alt + A"
           onClick={() => {
             onAddAlert(price);
             onClose();
@@ -105,18 +97,28 @@ function TradeSection({
       {onQuickOrder && tick && (
         <>
           <MenuItem
-            icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-            label={`Buy 1 ${symbol} @ ${p} ${buyOrderType(price, tick.ask).toLowerCase()}`}
+            icon={<ChevronUp className={ico} strokeWidth={1.5} />}
+            label={`Buy 1 ${ticker} @ ${p} ${buyOrderType(price, tick.ask).toLowerCase()}`}
+            hint="Alt + Shift + B"
             onClick={() => {
               onQuickOrder("BUY", buyOrderType(price, tick.ask), price);
               onClose();
             }}
           />
           <MenuItem
-            icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-            label={`Sell 1 ${symbol} @ ${p} ${sellOrderType(price, tick.bid).toLowerCase()}`}
+            icon={<ChevronDown className={ico} strokeWidth={1.5} />}
+            label={`Sell 1 ${ticker} @ ${p} ${sellOrderType(price, tick.bid).toLowerCase()}`}
             onClick={() => {
               onQuickOrder("SELL", sellOrderType(price, tick.bid), price);
+              onClose();
+            }}
+          />
+          <MenuItem
+            icon={<SquarePlus className={ico} strokeWidth={1.25} />}
+            label={`Add order on ${ticker} at ${p}…`}
+            hint="Shift + T"
+            onClick={() => {
+              onQuickOrder("BUY", buyOrderType(price, tick.ask), price);
               onClose();
             }}
           />
@@ -135,7 +137,6 @@ export function ChartContextMenu(props: ChartContextMenuProps) {
     drawingsCount,
     indicatorsCount,
     onClose,
-    onResetView,
     onCopyPrice,
     onOpenObjectTree,
     onRemoveAllDrawings,
@@ -179,34 +180,49 @@ export function ChartContextMenu(props: ChartContextMenuProps) {
       <div
         ref={menuRef}
         style={{ left: pos.x, top: pos.y }}
-        className="fixed z-50 min-w-[230px] rounded-lg border border-border bg-card/95 py-1 shadow-2xl backdrop-blur-xl"
+        className="tv-scroll fixed z-50 min-w-[312px] rounded-[6px] bg-popover py-[6px] shadow-[0_2px_4px_rgba(0,0,0,0.2)]"
       >
+        {price != null && (
+          <MenuItem
+            label={`Copy price ${price.toFixed(pipDigits)}`}
+            onClick={() => {
+              onCopyPrice(price);
+              onClose();
+            }}
+          />
+        )}
         <MenuItem
-          icon={<RotateCcw className="h-3.5 w-3.5" />}
-          label="Reset chart view"
+          label="Paste"
+          hint="Ctrl + V"
           onClick={() => {
-            onResetView();
+            // The drawing layer owns the clipboard; hand it the same shortcut.
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "v", code: "KeyV", ctrlKey: true }));
             onClose();
           }}
         />
         {price != null && (
           <>
             <Separator />
-            <MenuItem
-              icon={<ClipboardCopy className="h-3.5 w-3.5" />}
-              label={`Copy price ${price.toFixed(pipDigits)}`}
-              onClick={() => {
-                onCopyPrice(price);
-                onClose();
-              }}
-            />
-            <Separator />
             <TradeSection {...props} price={price} />
           </>
         )}
         <Separator />
         <MenuItem
-          icon={<ListTree className="h-3.5 w-3.5" />}
+          label="Lock vertical cursor line by time"
+          onClick={() => {
+            onClose();
+            notAvailable("Locking the cursor line");
+          }}
+        />
+        <Separator />
+        <MenuItem
+          label="Table view"
+          onClick={() => {
+            onClose();
+            notAvailable("Table view");
+          }}
+        />
+        <MenuItem
           label="Object tree"
           onClick={() => {
             onOpenObjectTree();
@@ -216,9 +232,7 @@ export function ChartContextMenu(props: ChartContextMenuProps) {
         {(drawingsCount > 0 || indicatorsCount > 0) && <Separator />}
         {drawingsCount > 0 && onRemoveAllDrawings && (
           <MenuItem
-            icon={<Trash2 className="h-3.5 w-3.5" />}
             label={`Remove ${drawingsCount} drawing${drawingsCount === 1 ? "" : "s"}`}
-            danger
             onClick={() => {
               onRemoveAllDrawings();
               onClose();
@@ -227,9 +241,7 @@ export function ChartContextMenu(props: ChartContextMenuProps) {
         )}
         {indicatorsCount > 0 && onClearIndicators && (
           <MenuItem
-            icon={<Trash2 className="h-3.5 w-3.5" />}
             label={`Remove ${indicatorsCount} indicator${indicatorsCount === 1 ? "" : "s"}`}
-            danger
             onClick={() => {
               onClearIndicators();
               onClose();
@@ -238,8 +250,8 @@ export function ChartContextMenu(props: ChartContextMenuProps) {
         )}
         <Separator />
         <MenuItem
-          icon={<Settings className="h-3.5 w-3.5" />}
-          label="Chart Settings…"
+          icon={<Settings className="h-[18px] w-[18px]" strokeWidth={1.25} />}
+          label="Settings…"
           onClick={() => {
             onOpenSettings();
             onClose();

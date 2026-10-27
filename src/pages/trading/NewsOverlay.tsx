@@ -1,5 +1,5 @@
 import { useLayoutEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
-import { GripVertical, Newspaper, Settings2, X } from "lucide-react";
+import { GripVertical, X } from "lucide-react";
 import { useDragOffset } from "../../hooks/useDragOffset.ts";
 import { cn } from "../../lib/utils.ts";
 import type { NewsOverlayConfig } from "./constants.ts";
@@ -148,26 +148,7 @@ export function NewsOverlay({
         </div>
       )}
 
-      {/* News config button */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setShowNewsConfigDialog((v) => !v);
-          setNewsPopup(null);
-        }}
-        className={cn(
-          "absolute bottom-2 right-24 z-10 flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all",
-          newsConfig.enabled
-            ? "bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25"
-            : "bg-secondary/60 text-muted-foreground border border-border hover:bg-secondary",
-        )}
-        title="News overlay settings"
-      >
-        <Newspaper className="h-3 w-3" />
-        News
-        <Settings2 className="h-2.5 w-2.5 ml-0.5 opacity-60" />
-      </button>
-
+      {/* The settings live under Chart settings → News, like TradingView keeps the chart clear. */}
       {/* News configuration dialog (draggable by its header) */}
       {showNewsConfigDialog && (
         <div
@@ -203,13 +184,13 @@ export function NewsOverlay({
             </div>
 
             <div className="p-3 space-y-3">
-              <label className="flex items-center justify-between cursor-pointer">
+              <label className="flex items-center justify-between cursor-default">
                 <span className="text-[11px] font-medium">Enable News Overlay</span>
                 <input
                   type="checkbox"
                   checked={newsConfig.enabled}
                   onChange={(e) => setNewsConfig((c) => ({ ...c, enabled: e.target.checked }))}
-                  className="h-3.5 w-3.5 rounded accent-red-500 cursor-pointer"
+                  className="h-3.5 w-3.5 rounded accent-red-500 cursor-default"
                 />
               </label>
 
@@ -220,7 +201,7 @@ export function NewsOverlay({
                     type="color"
                     value={newsConfig.lineColor}
                     onChange={(e) => setNewsConfig((c) => ({ ...c, lineColor: e.target.value }))}
-                    className="w-6 h-5 rounded border-0 cursor-pointer p-0 bg-transparent"
+                    className="w-6 h-5 rounded border-0 cursor-default p-0 bg-transparent"
                   />
                   <span className="text-[9px] font-mono text-muted-foreground">
                     {newsConfig.lineColor}
@@ -239,22 +220,22 @@ export function NewsOverlay({
                 >
                   Time Filters
                 </span>
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-default">
                   <span className="text-[11px]">Show Past Events</span>
                   <input
                     type="checkbox"
                     checked={newsConfig.showPast}
                     onChange={(e) => setNewsConfig((c) => ({ ...c, showPast: e.target.checked }))}
-                    className="h-3.5 w-3.5 rounded accent-red-500 cursor-pointer"
+                    className="h-3.5 w-3.5 rounded accent-red-500 cursor-default"
                   />
                 </label>
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-default">
                   <span className="text-[11px]">Show Future Events</span>
                   <input
                     type="checkbox"
                     checked={newsConfig.showFuture}
                     onChange={(e) => setNewsConfig((c) => ({ ...c, showFuture: e.target.checked }))}
-                    className="h-3.5 w-3.5 rounded accent-red-500 cursor-pointer"
+                    className="h-3.5 w-3.5 rounded accent-red-500 cursor-default"
                   />
                 </label>
               </div>
@@ -270,7 +251,7 @@ export function NewsOverlay({
                 >
                   Impact Levels
                 </span>
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-default">
                   <span className="flex items-center gap-1.5 text-[11px]">
                     <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
                     High Impact
@@ -279,10 +260,10 @@ export function NewsOverlay({
                     type="checkbox"
                     checked={newsConfig.showHigh}
                     onChange={(e) => setNewsConfig((c) => ({ ...c, showHigh: e.target.checked }))}
-                    className="h-3.5 w-3.5 rounded accent-red-500 cursor-pointer"
+                    className="h-3.5 w-3.5 rounded accent-red-500 cursor-default"
                   />
                 </label>
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-default">
                   <span className="flex items-center gap-1.5 text-[11px]">
                     <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
                     Medium Impact
@@ -291,10 +272,10 @@ export function NewsOverlay({
                     type="checkbox"
                     checked={newsConfig.showMedium}
                     onChange={(e) => setNewsConfig((c) => ({ ...c, showMedium: e.target.checked }))}
-                    className="h-3.5 w-3.5 rounded accent-amber-500 cursor-pointer"
+                    className="h-3.5 w-3.5 rounded accent-amber-500 cursor-default"
                   />
                 </label>
-                <label className="flex items-center justify-between cursor-pointer">
+                <label className="flex items-center justify-between cursor-default">
                   <span className="flex items-center gap-1.5 text-[11px]">
                     <span className="inline-block w-2 h-2 rounded-full bg-gray-400" />
                     Low Impact
@@ -303,7 +284,7 @@ export function NewsOverlay({
                     type="checkbox"
                     checked={newsConfig.showLow}
                     onChange={(e) => setNewsConfig((c) => ({ ...c, showLow: e.target.checked }))}
-                    className="h-3.5 w-3.5 rounded accent-gray-500 cursor-pointer"
+                    className="h-3.5 w-3.5 rounded accent-gray-500 cursor-default"
                   />
                 </label>
               </div>

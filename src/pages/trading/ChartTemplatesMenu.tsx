@@ -147,7 +147,7 @@ function AutosaveRow({ enabled, onToggle }: { enabled: boolean; onToggle: () => 
         aria-checked={enabled}
         onClick={onToggle}
         className={cn(
-          "inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full border-0 p-0 transition-colors",
+          "inline-flex h-4 w-8 shrink-0 cursor-default items-center rounded-full border-0 p-0 transition-colors",
           enabled ? "bg-primary" : "bg-secondary",
         )}
       >
@@ -192,7 +192,7 @@ function AddTemplateRow({ onAdd }: { onAdd: (name: string) => void }) {
         }}
         onBlur={commit}
         placeholder="Template name…"
-        className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs text-foreground outline-none focus:border-primary"
+        className="w-full rounded border border-border bg-transparent px-2 py-1 text-xs text-foreground outline-none"
       />
     </div>
   );
@@ -222,7 +222,7 @@ function TemplateList({
             onClick={() => onApply(t)}
             className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left text-xs text-foreground hover:bg-secondary"
           >
-            <span className="flex h-3.5 w-3.5 items-center justify-center text-primary">
+            <span className="flex h-3.5 w-3.5 items-center justify-center text-foreground">
               {t.name === activeName && <Check className="h-3.5 w-3.5" />}
             </span>
             <span className="truncate">{t.name}</span>
@@ -283,24 +283,34 @@ export function ChartTemplatesMenu(props: ChartTemplatesMenuProps) {
   };
 
   return (
-    <div className="relative hidden md:block">
+    <div className="relative hidden h-[38px] items-center md:flex">
+      {/* TradingView's layout name (72px) and its 24px "Manage layouts" chevron. */}
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        title="Chart layout templates"
-        className={cn(
-          "flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors",
-          open ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
-        )}
+        title="All changes saved"
+        className="flex h-[38px] w-[71px] items-center px-[3px] text-[14px] text-foreground"
       >
-        <CloudUpload className="h-3.5 w-3.5" />
-        <span className="hidden max-w-[110px] truncate lg:inline">{activeName || "Templates"}</span>
-        <ChevronDown className={cn("h-3 w-3 transition-transform", open && "rotate-180")} />
+        <span className={cn("flex h-[32px] w-full items-center justify-center rounded px-[3px]", open ? "bg-secondary" : "hover:bg-secondary")}>
+          <span className="truncate">{activeName || "Unnamed"}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Manage layouts"
+        aria-label="Manage layouts"
+        className="flex h-[38px] w-[24px] items-center justify-center text-foreground"
+      >
+        <span className={cn("flex h-[32px] w-full items-center justify-center rounded", open ? "bg-secondary" : "hover:bg-secondary")}>
+          <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
+        </span>
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1 w-60 rounded-lg border border-border bg-card/95 py-1 shadow-2xl backdrop-blur-xl">
+          <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-border bg-popover py-1.5 shadow-[0_2px_12px_rgba(0,0,0,0.2)]">
             <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Layout templates
             </div>

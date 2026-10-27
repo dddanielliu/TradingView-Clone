@@ -4,6 +4,7 @@ import { OrderPanel } from "../pages/trading/OrderPanel.tsx";
 import { OrdersTable } from "../pages/trading/OrdersTable.tsx";
 import { PositionsTable } from "../pages/trading/PositionsTable.tsx";
 import { WatchlistPanel } from "../pages/trading/WatchlistPanel.tsx";
+import { useTradingStore } from "../services/store.tsx";
 import { useTerminal } from "./use-terminal.ts";
 
 /**
@@ -22,10 +23,11 @@ export function Chart() {
     <ChartPanel
       candles={t.replayCandles ?? t.candles ?? []}
       selectedSymbol={t.selectedSymbol}
-      timeframe={t.replayCandles ? "1m" : t.timeframe}
+      timeframe={t.timeframe}
       isDark={t.isDark}
       activeIndicators={t.activeIndicators}
       drawingTool={t.drawingTool}
+      cursorMode={t.chartPrefs.cursorMode}
       drawings={t.drawings}
       onAddDrawing={t.addDrawing}
       onUpdateDrawing={t.updateDrawing}
@@ -86,10 +88,13 @@ export function DepthLadder() {
 /** Instrument list with live prices. */
 export function Watchlist() {
   const t = useTerminal();
+  // Read here rather than through the terminal context, so a tick of any
+  // symbol re-renders this list and not the whole terminal.
+  const ticks = useTradingStore((s) => s.ticks);
   return (
     <WatchlistPanel
       symbols={t.symbols}
-      ticks={t.ticks}
+      ticks={ticks}
       selectedSymbol={t.selectedSymbol}
       onSelect={t.setSelectedSymbol}
       accountId={t.activeAccountId}

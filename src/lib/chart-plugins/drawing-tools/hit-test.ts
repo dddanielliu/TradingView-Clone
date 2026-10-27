@@ -1,23 +1,36 @@
 import { dist, distToSegment, type Pt, pointInBox } from "./geometry";
+import { imageCorners, textBoxes } from "./annotationtools";
+import { hitFibArcs, hitFibCircles, hitRayFan, hitSpeedFan, hitSpiral, pitchfanTargets } from "./fibtools";
+import { gannBox, hitGannSquare } from "./gann";
+import { hitIconTool } from "./icontools";
+import { curvePath, sampleCurve } from "./shapetools";
+import { hitSector } from "./measuretools";
+import { hitForecast } from "./forecast";
 import type { Hit, PriceKey, ResolvedEntry, TimeKey } from "./types";
 
-const HANDLE_TOLERANCE = 8;
-const LINE_TOLERANCE = 6;
+// TradingView's interaction tolerances (mouse / touch): an anchor is hit
+// within its radius (6 / 13) plus 2 / 13; a line or curve within 3 / 13 plus
+// half its width.
+const MOUSE = { anchorRadius: 6, anchor: 2, line: 3, curve: 3 };
+const TOUCH = { anchorRadius: 13, anchor: 13, line: 13, curve: 13 };
 
-/** Pixel tolerances, scaled up for touch input (fat-finger friendly). */
+/** Pixel tolerances for one drawing. */
 interface Tol {
   handle: number;
   line: number;
+  curve: number;
 }
 
 /**
  * Topmost (last-drawn) drawing wins, matching visual stacking order.
- * `scale` multiplies hit tolerances — pass ~2 for touch input.
+ * `scale` > 1 means touch input.
  */
 export function hitTest(entries: ResolvedEntry[], p: Pt, scale = 1): Hit | null {
-  const tol: Tol = { handle: HANDLE_TOLERANCE * scale, line: LINE_TOLERANCE * scale };
+  const t = scale > 1 ? TOUCH : MOUSE;
   for (let i = entries.length - 1; i >= 0; i--) {
-    const hit = hitEntry(entries[i]!, p, tol);
+    const e = entries[i]!;
+    const half = (e.d.width ?? 2) / 2;
+    const hit = hitEntry(e, p, { handle: t.anchorRadius + t.anchor, line: t.line + half, curve: t.curve });
     if (hit) return hit;
   }
   return null;
@@ -48,9 +61,215 @@ function hitEntry(e: ResolvedEntry, p: Pt, tol: Tol): Hit | null {
       return hitBoxShape(e, p, tol);
     case "text":
       return hitText(e, p, tol);
+    case "brush":
+    case "highlighter":
+      return hitBrush(e, p, tol);
+    case "arrowmarker":
+    case "arrowup":
+    case "arrowdown":
+    case "rotatedrect":
+    case "path":
+    case "circle":
+    case "polyline":
+    case "arc":
+      return hitVertices(e, p, tol) ?? hitBrush(e, p, tol) ?? hitHull(e, p);
+    case "curve":
+    case "doublecurve": {
+      const v = hitVertices(e, p, tol);
+      const [a, b, c, d] = e.pts ?? [];
+      if (v || !a || !b) return v;
+      const line = c ? sampleCurve(curvePath(e.d.type, a, b, c, d)) : [a, b];
+      for (let i = 1; i < line.length; i++) {
+        if (distToSegment(p, line[i - 1]!, line[i]!) <= tol.line) return { id: e.d.id, region: { kind: "body" } };
+      }
+      return null;
+    }
+    case "xabcd":
+    case "cypher":
+    case "abcd":
+    case "headshoulders":
+    case "trianglepattern":
+    case "threedrives":
+    case "elliottimpulse":
+    case "elliottcorrection":
+    case "elliotttriangle":
+    case "elliottdouble":
+    case "elliotttriple":
+      return hitVertices(e, p, tol) ?? hitBrush(e, p, tol);
+    case "horzray": {
+      const a = e.pts?.[0];
+      if (!a) return null;
+      if (dist(p, a) <= tol.handle) return { id: e.d.id, region: { kind: "vertex", index: 0 } };
+      return Math.abs(p.y - a.y) <= tol.line && p.x >= a.x - tol.line ? bodyHit(e) : null;
+    }
+    case "crossline": {
+      const a = e.pts?.[0];
+      if (!a) return null;
+      if (dist(p, a) <= tol.handle) return { id: e.d.id, region: { kind: "vertex", index: 0 } };
+      return Math.abs(p.y - a.y) <= tol.line || Math.abs(p.x - a.x) <= tol.line ? bodyHit(e) : null;
+    }
+    case "trendangle":
+    case "flatbottom":
+    case "disjointchannel":
+    case "regression":
+    case "pitchfork":
+    case "schiffpitchfork":
+    case "modschiffpitchfork":
+    case "insidepitchfork":
+    case "cycliclines":
+    case "timecycles":
+    case "sineline":
+    case "barspattern":
+    case "ghostfeed":
+    case "anchoredvwap":
+    case "avp":
+    case "pricerange":
+    case "daterange":
+    case "datepricerange":
+    case "textnote":
+    case "pricenote":
+    case "pin":
+    case "callout":
+    case "comment":
+    case "pricelabel":
+    case "signpost":
+    case "flagmark":
+      return hitVertices(e, p, tol) ?? hitTextBox(e, p) ?? hitBrush(e, p, tol) ?? hitHull(e, p);
+    case "image": {
+      const c = e.pts?.[0];
+      const { cssWidth: w, cssHeight: h } = e.d;
+      if (!c || !w || !h) return null;
+      if (e.state === "selected") {
+        const corners = imageCorners(c, w, h);
+        for (let i = 0; i < 4; i++) if (dist(p, corners[i]!) <= tol.handle) return { id: e.d.id, region: { kind: "imageCorner", index: i } };
+      }
+      const inside = p.x >= c.x - w / 2 && p.x <= c.x + w / 2 && p.y >= c.y - h / 2 && p.y <= c.y + h / 2;
+      return inside ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "table":
+      return hitTextBox(e, p) ?? hitVertices(e, p, tol);
+    case "gannbox": {
+      // Its two points plus the other two corners; inside the box (filled) is the body.
+      const [a, b] = e.pts ?? [];
+      if (!a || !b) return hitVertices(e, p, tol);
+      const corners = [a, b, { x: a.x, y: b.y }, { x: b.x, y: a.y }];
+      for (let i = 0; i < 4; i++) if (dist(p, corners[i]!) <= tol.handle) return { id: e.d.id, region: { kind: "vertex", index: i } };
+      const l = Math.min(a.x, b.x) - tol.line;
+      const r = Math.max(a.x, b.x) + tol.line;
+      const t = Math.min(a.y, b.y) - tol.line;
+      const btm = Math.max(a.y, b.y) + tol.line;
+      return p.x >= l && p.x <= r && p.y >= t && p.y <= btm ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "gannfixed":
+    case "gannsquare": {
+      const [a, b] = e.pts ?? [];
+      const v = hitVertices(e, p, tol);
+      if (v || !a || !b) return v;
+      const box = gannBox(e.d.type, a, b, e.d.reverse === true);
+      return box && hitGannSquare(p, box.start, box.end, box.start, tol.line, tol.curve) ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "pitchfan": {
+      const [a, b, c] = e.pts ?? [];
+      const v = hitVertices(e, p, tol);
+      if (v || !a || !b) return v;
+      if (!c) return hitRayFan(a, [b], p, tol.line, false) ? { id: e.d.id, region: { kind: "body" } } : null;
+      const on = distToSegment(p, b, c) <= tol.line || hitRayFan(a, pitchfanTargets(b, c), p, tol.line, true);
+      return on ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "fibspeedfan": {
+      const [a, b] = e.pts ?? [];
+      const v = hitVertices(e, p, tol);
+      if (v || !a || !b) return v;
+      return hitSpeedFan(a, b, p, tol.line) ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "fibcircles":
+    case "fibarcs": {
+      const [a, b] = e.pts ?? [];
+      const v = hitVertices(e, p, tol);
+      if (v || !a || !b) return v;
+      if (distToSegment(p, a, b) <= tol.line) return { id: e.d.id, region: { kind: "body" } };
+      const on = e.d.type === "fibarcs" ? hitFibArcs(a, b, p, tol.curve) !== null : hitFibCircles(a, b, p, tol.curve);
+      return on ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "forecast": {
+      const v = hitVertices(e, p, tol);
+      const [a, b] = e.pts ?? [];
+      if (v || !a || !b) return v;
+      return hitForecast(e.d.id, { source: a, target: b }, p) ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "frvp": {
+      // Its anchors are the range's high / low corners; the box between them is filled.
+      const v = hitVertices(e, p, tol);
+      const [a, b] = e.pts ?? [];
+      if (v || !a || !b) return v;
+      const inside = p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) && p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+      return inside ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "sector": {
+      const [a, b, c] = e.pts ?? [];
+      const v = hitVertices(e, p, tol);
+      if (v || !a || !b) return v;
+      const on = distToSegment(p, a, b) <= tol.line || (c !== undefined && (distToSegment(p, a, c) <= tol.line || hitSector(a, b, c, p)));
+      return on ? { id: e.d.id, region: { kind: "body" } } : null;
+    }
+    case "fibspiral": {
+      const [a, b] = e.pts ?? [];
+      const v = hitVertices(e, p, tol);
+      if (v || !a || !b) return v;
+      const far = { x: b.x + (b.x - a.x) * 1e4, y: b.y + (b.y - a.y) * 1e4 };
+      if (distToSegment(p, a, far) <= tol.line || hitSpiral(a, b, e.d.counterclockwise === true, p, tol.curve)) {
+        return { id: e.d.id, region: { kind: "body" } };
+      }
+      return null;
+    }
+    case "icon":
+    case "emoji":
+      return hitIconTool(e, p, tol.handle);
+    case "fibextension3":
+    case "fibchannel":
+    case "fibtimezone":
+    case "fibtime":
+    case "fibwedge":
+    case "gannfan":
+      return hitVertices(e, p, tol) ?? hitBrush(e, p, tol) ?? hitHull(e, p);
     default:
       return null;
   }
+}
+
+// Text tools are also grabbed by their text box.
+function hitTextBox(e: ResolvedEntry, p: Pt): Hit | null {
+  const r = textBoxes.get(e.d.id);
+  if (!r) return null;
+  const pad = e.d.type === "table" ? 9 : 8;
+  return p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad ? bodyHit(e) : null;
+}
+
+// Area tools (fans, circles, channels) are also grabbed inside their anchors' box.
+function hitHull(e: ResolvedEntry, p: Pt): Hit | null {
+  const pts = e.pts ?? [];
+  if (pts.length < 2) return null;
+  const xs = pts.map((q) => q.x);
+  const ys = pts.map((q) => q.y);
+  return pointInBox(p, Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), 0) ? bodyHit(e) : null;
+}
+
+// Any anchor of a point-list drawing drags on its own.
+function hitVertices(e: ResolvedEntry, p: Pt, tol: Tol): Hit | null {
+  const pts = e.pts ?? [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    if (dist(p, pts[i]!) <= tol.handle) return { id: e.d.id, region: { kind: "vertex", index: i } };
+  }
+  return null;
+}
+
+// A brush stroke is grabbed anywhere along it and moves as a whole.
+function hitBrush(e: ResolvedEntry, p: Pt, tol: Tol): Hit | null {
+  const pts = e.pts ?? [];
+  for (let i = 1; i < pts.length; i++) {
+    if (distToSegment(p, pts[i - 1]!, pts[i]!) <= tol.line) return bodyHit(e);
+  }
+  return null;
 }
 
 function hitVertical(e: ResolvedEntry, p: Pt, tol: Tol): Hit | null {
@@ -100,21 +319,22 @@ function pointHit(e: ResolvedEntry, timeKey: TimeKey | null, priceKey: PriceKey 
   return { id: e.d.id, region: { kind: "point", timeKey, priceKey } };
 }
 
-// Position handles: entry / target / stop sit at the box mid-x; the right edge
-// resizes the box width. Body = anywhere inside the entry↔stop↔target span.
+// Position handles: target / entry / stop on the left edge; the entry's right
+// end resizes the width. Body = anywhere inside the entry↔stop↔target span.
 function hitPosition(e: ResolvedEntry, p: Pt, tol: Tol): Hit | null {
   const { x1, x2, y1, yStop, yTarget } = e;
   if (x1 === null || x2 === null || y1 === null) return null;
   const xa = Math.min(x1, x2);
   const xb = Math.max(x1, x2);
-  const xm = (xa + xb) / 2;
-  if (yTarget != null && dist(p, { x: xm, y: yTarget }) <= tol.handle) {
+  // Handles sit on the left edge (target, entry, stop) and at the entry's
+  // right end (width), as on TradingView.
+  if (yTarget != null && dist(p, { x: xa, y: yTarget }) <= tol.handle) {
     return pointHit(e, null, "targetPrice");
   }
-  if (yStop != null && dist(p, { x: xm, y: yStop }) <= tol.handle) {
+  if (yStop != null && dist(p, { x: xa, y: yStop }) <= tol.handle) {
     return pointHit(e, null, "stopPrice");
   }
-  if (dist(p, { x: xm, y: y1 }) <= tol.handle) return pointHit(e, null, "price");
+  if (dist(p, { x: xa, y: y1 }) <= tol.handle) return pointHit(e, "time", "price");
   if (dist(p, { x: xb, y: y1 }) <= tol.handle) return pointHit(e, "time2", null);
   const ys = [y1, yStop ?? y1, yTarget ?? y1];
   const top = Math.min(...ys);

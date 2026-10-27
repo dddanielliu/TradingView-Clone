@@ -79,7 +79,7 @@ keep changes on the right side of it.
   tokens in `tailwind.config.js`.
 - **Data adapters** for other exchanges or brokers, written against
   `OpenChartsAdapter`. Start from `examples/binance-adapter/` and verify with
-  `runAdapterConformance` from `@dylanpersonguy/opencharts/conformance`.
+  `runAdapterConformance` from `tradingview-clone/conformance`.
 - **Bug reports.** Genuinely useful. Include what you expected and what happened.
 
 ## Pull requests

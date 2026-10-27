@@ -10,7 +10,7 @@ import type { MarketEvent, OpenChartsAdapter, TradingEvent } from "./types.ts";
  * window the chart's scroll-back pagination sends.
  *
  * ```ts
- * import { runAdapterConformance } from "opencharts/adapter/conformance";
+ * import { runAdapterConformance } from "tradingview-clone/adapter/conformance";
  *
  * runAdapterConformance("my-broker", () => createMyAdapter(), {
  *   symbol: "BTCUSD",

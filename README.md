@@ -152,25 +152,21 @@ toolbar and removable individually or in bulk from the chart context menu.
 
 ### Use it in your app
 
-> **Not on npm yet.** The package is ready to publish but has not been
-> released. Until it is, build the tarball from a clone and install that:
->
+> **Not on npm yet.** Build it from a clone and install from source:
 > ```bash
-> npm install && npm run build:lib && npm pack
-> # then, in your app:
-> npm install /path/to/OpenCharts/dylanpersonguy-opencharts-0.3.0.tgz
+> npm install
+> npm run build:lib
 > ```
->
-> Once it is published, this becomes:
+> Then install the built package directly:
+> ```bash
+> npm install ./dist-lib
+> ```
 
-```bash
-npm install @dylanpersonguy/opencharts
-```
 
 ```tsx
-import { OpenChartsProvider, Terminal } from "@dylanpersonguy/opencharts";
-import { createDemoAdapter } from "@dylanpersonguy/opencharts/demo";
-import "@dylanpersonguy/opencharts/style.css";
+import { OpenChartsProvider, Terminal } from "tradingview-clone";
+import { createDemoAdapter } from "tradingview-clone/demo";
+import "tradingview-clone/style.css";
 
 export function TradingScreen() {
   return (
@@ -522,7 +518,7 @@ hand it to the provider, and the whole terminal — chart, order ticket, positio
 replay — runs against your backend.
 
 ```tsx
-import { OpenChartsProvider, Terminal, type OpenChartsAdapter } from "@dylanpersonguy/opencharts";
+import { OpenChartsProvider, Terminal, type OpenChartsAdapter } from "tradingview-clone";
 
 const adapter: OpenChartsAdapter = {
   name: "my-broker",
@@ -578,7 +574,7 @@ A conformance suite ships with the project and checks the things that fail
 quietly:
 
 ```ts
-import { runAdapterConformance } from "@dylanpersonguy/opencharts/conformance";
+import { runAdapterConformance } from "tradingview-clone/conformance";
 
 runAdapterConformance("my-broker", () => createMyAdapter(), { symbol: "BTCUSD" });
 ```
@@ -653,7 +649,7 @@ Order fills, rejections and their reasons, and validation warnings come
 through one stream:
 
 ```tsx
-import { onNotification } from "@dylanpersonguy/opencharts";
+import { onNotification } from "tradingview-clone";
 
 const stop = onNotification((n) => myToaster.show(n.title, n.message, n.type));
 ```

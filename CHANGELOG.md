@@ -9,14 +9,14 @@ major version is `0`, minor releases may contain breaking changes.
 
 ## [0.3.0] — 2026-09-21
 
-OpenCharts is now installable: `npm install @dylanpersonguy/opencharts`. This
+OpenCharts is now installable: `npm install tradingview-clone`. This
 release makes it embeddable without forking — bring your own backend through an
 adapter, put the panels in your own layout, and drop it into a page it will not
 disturb.
 
 ### Added
 
-- **Published as a package**: `@dylanpersonguy/opencharts`, with separate
+- **Published as a package**: `tradingview-clone`, with separate
   entries for the core (`.`), the bundled demo backend (`/demo`), the adapter
   conformance suite (`/conformance`) and a precompiled stylesheet
   (`/style.css`). ESM with type declarations; React 18.2+ is the only peer

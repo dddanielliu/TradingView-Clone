@@ -1,5 +1,5 @@
 {
-  "name": "@dylanpersonguy/opencharts",
+  "name": "tradingview-clone",
   "version": "0.3.0",
   "description": "Open-source trading terminal: advanced charting, drawing tools and a built-in paper-trading engine, with no backend required.",
   "keywords": [

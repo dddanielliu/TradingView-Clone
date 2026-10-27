@@ -239,6 +239,7 @@ export function TradingPage() {
     }
     t.setDrawingTool("none");
     replay.open();
+    window.dispatchEvent(new Event(RESET_VIEW_EVENT));
   };
   const candleSec = (i: number) => {
     const c = t.candles?.[i];

@@ -239,7 +239,6 @@ export function TradingPage() {
     }
     t.setDrawingTool("none");
     replay.open();
-    window.dispatchEvent(new Event(RESET_VIEW_EVENT));
   };
   const candleSec = (i: number) => {
     const c = t.candles?.[i];
@@ -247,14 +246,20 @@ export function TradingPage() {
   };
   const replayFirst = () => {
     const s = candleSec(0);
-    if (s != null) replay.startAt(s);
+    if (s != null) {
+      replay.startAt(s);
+      window.dispatchEvent(new Event(RESET_VIEW_EVENT));
+    }
   };
   const replayRandom = () => {
     const n = t.candles?.length ?? 0;
     if (n < 2) return;
     // Anywhere but the very start and the last stretch: context before, bars after.
     const s = candleSec(Math.floor(n * (0.05 + Math.random() * 0.85)));
-    if (s != null) replay.startAt(s);
+    if (s != null) {
+      replay.startAt(s);
+      window.dispatchEvent(new Event(RESET_VIEW_EVENT));
+    }
   };
 
   // ── Market orders from the legend's SELL / BUY boxes
@@ -505,7 +510,10 @@ export function TradingPage() {
                 onClearDrawings={t.clearDrawings}
                 onClearIndicators={t.clearIndicators}
                 replayPicking={replayPicking}
-                onReplayPick={replay.startAt}
+                onReplayPick={(s) => {
+                  replay.startAt(s);
+                  window.dispatchEvent(new Event(RESET_VIEW_EVENT));
+                }}
                 onMarketOrder={marketOrder}
                 onChartApi={setChartApi}
                 snapshotLegendRef={snapshotLegendRef}

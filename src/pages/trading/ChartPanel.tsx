@@ -2282,6 +2282,8 @@ export function ChartPanel({
       lastCandleRef.current = null;
       legendVolRef.current = 0;
       liveCandleTsRef.current = 0;
+      // The legend's values belonged to that chart's bars.
+      setLegend(null);
       loadMoreRef.current = {
         loading: false,
         noMoreData: false,
@@ -2440,6 +2442,24 @@ export function ChartPanel({
   useEffect(() => {
     latestLiveCandleRef.current = liveCandle;
   }, [liveCandle]);
+
+  // A timeframe switch keeps the chart (a symbol switch rebuilds it): drop
+  // the old timeframe's bars so nothing shows, and no live price is merged
+  // into them, until the new history arrives. Declared before the data
+  // effect so already-cached bars still land in the same commit.
+  const shownTimeframeRef = useRef(timeframe);
+  useEffect(() => {
+    if (shownTimeframeRef.current === timeframe) return;
+    shownTimeframeRef.current = timeframe;
+    candleSeriesRef.current?.setData([]);
+    volumeSeriesRef.current?.setData([]);
+    // Real-time bookkeeping refs, as in the data effect below.
+    // eslint-disable-next-line react-hooks/immutability
+    lastCandleRef.current = null;
+    // eslint-disable-next-line react-hooks/immutability
+    liveCandleTsRef.current = 0;
+    setLegend(null);
+  }, [timeframe]);
 
   // Update candle data from server (historical fetch / periodic sync)
   useEffect(() => {

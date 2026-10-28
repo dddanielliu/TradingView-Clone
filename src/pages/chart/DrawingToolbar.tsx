@@ -5,6 +5,11 @@ import type { DrawingLine, DrawingLineStyle } from "../trading/constants.ts";
 import { TrashIcon } from "./icons.tsx";
 import { notAvailable } from "./notAvailable.ts";
 import { MenuItem, Popover } from "./ui.tsx";
+import { ColorPicker } from "./ColorPicker.tsx";
+import { baseHex, hexAlpha, withOpacity } from "./colors.ts";
+
+// The renderers' default background transparency (RECT_FILL_ALPHA).
+const DEFAULT_FILL_OPACITY = 0.14;
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -28,28 +33,6 @@ function shortcutFor(shortcut: string): string {
  *
  * Each property is one button that opens its own popup, as there.
  */
-
-/** Ten columns: greys, base hues, then lighter and darker steps of each hue. */
-const BASE = ["#f23645", "#ff9800", "#ffeb3b", "#4caf50", "#089981", "#00bcd4", "#2962ff", "#673ab7", "#9c27b0", "#e91e63"];
-const GREYS = ["#ffffff", "#d1d4dc", "#b2b5be", "#9598a1", "#787b86", "#5d606b", "#434651", "#2a2e39", "#131722", "#000000"];
-
-function mix(hex: string, with_: string, amount: number): string {
-  const p = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-  const a = p(hex);
-  const b = p(with_);
-  return `#${a.map((v, i) => Math.round(v + (b[i]! - v) * amount).toString(16).padStart(2, "0")).join("")}`;
-}
-
-const PALETTE: string[][] = [
-  GREYS,
-  BASE,
-  BASE.map((c) => mix(c, "#ffffff", 0.75)),
-  BASE.map((c) => mix(c, "#ffffff", 0.55)),
-  BASE.map((c) => mix(c, "#ffffff", 0.3)),
-  BASE.map((c) => mix(c, "#000000", 0.2)),
-  BASE.map((c) => mix(c, "#000000", 0.4)),
-  BASE.map((c) => mix(c, "#000000", 0.6)),
-];
 
 const WIDTHS = [1, 2, 3, 4];
 const STYLES: { style: DrawingLineStyle; label: string; dash?: string }[] = [
@@ -92,8 +75,10 @@ export function DrawingToolbar({
       role="toolbar"
       aria-label="Drawing toolbar"
       // TradingView opens it at the chart's top-right, 11px down and 16px in.
-      className="absolute right-4 top-[11px] z-20 flex h-[38px] items-center rounded-md border border-border bg-popover px-[3px] text-foreground shadow-[0_2px_8px_rgba(0,0,0,0.15)]"
-      style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
+      className="absolute z-20 flex h-[38px] items-center rounded-md border border-border bg-popover px-[3px] text-foreground shadow-[0_2px_8px_rgba(0,0,0,0.15)]"
+      // Moved by right / top, not a transform: a transformed toolbar would be
+      // the frame its fixed-position popups (the colour pickers) are placed in.
+      style={{ right: 16 - offset.x, top: 11 + offset.y }}
     >
       <span
         title="Drag the toolbar"
@@ -122,21 +107,25 @@ export function DrawingToolbar({
           title="Line tool colors"
           glyph={<PencilGlyph />}
           color={drawing.color}
+          opacity={hexAlpha(drawing.color)}
           open={popup === "line"}
           onToggle={() => toggle("line")}
           onClose={close}
-          onPick={(color) => patch({ color })}
+          onPick={(c) => patch({ color: withOpacity(c, hexAlpha(drawing.color)) })}
+          onOpacity={(o) => patch({ color: withOpacity(drawing.color, o) })}
         />
       )}
       {FILLABLE.has(drawing.type) && (
         <ColorButton
           title="Line tool background color"
           glyph={<BucketGlyph />}
-          color={drawing.fillColor ?? drawing.color}
+          color={baseHex(drawing.fillColor ?? drawing.color)}
+          opacity={drawing.fillOpacity ?? DEFAULT_FILL_OPACITY}
           open={popup === "fill"}
           onToggle={() => toggle("fill")}
           onClose={close}
           onPick={(fillColor) => patch({ fillColor })}
+          onOpacity={(fillOpacity) => patch({ fillOpacity })}
         />
       )}
       {(isText || TEXT_COLORED.has(drawing.type)) && (
@@ -144,10 +133,18 @@ export function DrawingToolbar({
           title="Text color"
           glyph={<span className="text-[15px] leading-none">T</span>}
           color={drawing.textColor ?? drawing.color}
+          opacity={hexAlpha(drawing.textColor ?? drawing.color)}
           open={popup === "text"}
           onToggle={() => toggle("text")}
           onClose={close}
-          onPick={(c) => patch(isText ? { color: c } : { textColor: c })}
+          onPick={(c) => {
+            const a = hexAlpha(drawing.textColor ?? drawing.color);
+            patch(isText ? { color: withOpacity(c, a) } : { textColor: withOpacity(c, a) });
+          }}
+          onOpacity={(o) => {
+            const c = withOpacity(drawing.textColor ?? drawing.color, o);
+            patch(isText ? { color: c } : { textColor: c });
+          }}
         />
       )}
       {!isText && (
@@ -270,56 +267,38 @@ function ColorButton({
   title,
   glyph,
   color,
+  opacity,
   open,
   onToggle,
   onClose,
   onPick,
+  onOpacity,
 }: {
   title: string;
   glyph: ReactNode;
   color: string;
+  opacity: number;
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
   onPick: (c: string) => void;
+  onOpacity: (o: number) => void;
 }) {
   return (
     <Popover
       open={open}
       onClose={onClose}
+      className="min-w-0 py-0"
       trigger={
         <Btn title={title} active={open} onClick={onToggle}>
           <span className="flex flex-col items-center">
             {glyph}
-            <span className="mt-[2px] h-[3px] w-[18px] rounded-sm" style={{ background: color }} />
+            <span className="mt-[2px] h-[3px] w-[18px] rounded-sm" style={{ background: withOpacity(color, opacity) }} />
           </span>
         </Btn>
       }
     >
-      <div className="p-3">
-        <div className="grid grid-cols-10 gap-[3px]">
-          {PALETTE.flat().map((c, i) => (
-            <button
-              key={`${c}-${i}`}
-              type="button"
-              title={c}
-              onClick={() => {
-                onPick(c);
-                onClose();
-              }}
-              className={cn(
-                "h-[20px] w-[20px] rounded-[3px] border border-black/10",
-                c.toLowerCase() === color.toLowerCase() && "ring-2 ring-primary ring-offset-1 ring-offset-popover",
-              )}
-              style={{ background: c }}
-            />
-          ))}
-        </div>
-        <label className="mt-3 flex items-center gap-2 text-[13px] text-muted-foreground">
-          Custom
-          <input type="color" value={color.length === 7 ? color : "#2962ff"} onChange={(e) => onPick(e.target.value)} className="h-6 w-8 cursor-default border-0 bg-transparent p-0" />
-        </label>
-      </div>
+      <ColorPicker color={baseHex(color)} opacity={opacity} onColorChange={onPick} onOpacityChange={onOpacity} onClose={onClose} />
     </Popover>
   );
 }

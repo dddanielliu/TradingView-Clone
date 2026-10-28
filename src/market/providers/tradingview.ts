@@ -9,6 +9,8 @@ import {
   type SymbolSearchResult,
 } from "../types.ts";
 import { STANDARD_TIMEFRAMES } from "../timeframes.ts";
+
+const TV_TIMEFRAMES = STANDARD_TIMEFRAMES.filter((tf) => tf !== "2m" && tf !== "10m");
 import { bridgeGet, bridgeUrl } from "./http.ts";
 
 /**
@@ -84,8 +86,11 @@ export function createTradingViewProvider(options: TradingViewOptions = {}): Mar
         const q = JSON.parse(String(event.data)) as TvQuote & { symbol?: string };
         if (!q.symbol) return;
         const lp = q.lp;
-        const bid = q.bid ?? lp;
-        const ask = q.ask ?? lp;
+        // Outside trading hours TradingView sends bid / ask as 0 (not absent);
+        // the last price stands in for them then.
+        const quoted = (v: number | undefined) => (v != null && Number.isFinite(v) && v !== 0 ? v : undefined);
+        const bid = quoted(q.bid) ?? lp;
+        const ask = quoted(q.ask) ?? lp;
         if (bid == null || ask == null || !Number.isFinite(bid) || !Number.isFinite(ask)) return;
         emitTick?.({ symbol: q.symbol, bid, ask, timestamp: Date.now() });
       } catch {
@@ -97,9 +102,10 @@ export function createTradingViewProvider(options: TradingViewOptions = {}): Mar
 
   return {
     id: "tradingview",
-    // TradingView's standard resolutions; an anonymous session answers any
-    // other ("7m") with `custom_resolution`, so those are built from these.
-    timeframes: STANDARD_TIMEFRAMES,
+    // The resolutions an anonymous session serves: our standard list less 2m
+    // and 10m, which (like "7m") it answers with `custom_resolution`, so
+    // those are built from 1m / 5m bars.
+    timeframes: TV_TIMEFRAMES,
 
     canHandle: (id) => {
       const { exchange, ticker } = parseId(id);

@@ -4,6 +4,8 @@ import { getAdapter, hasAdapter } from "../adapter/registry.ts";
 import { api } from "../services/api.ts";
 import type { Symbol } from "../services/schemas.ts";
 import { useTradingStore } from "../services/store.tsx";
+import { bridgeGet } from "./providers/http.ts";
+import type { SymbolSessions } from "./session.ts";
 import type { QuoteStats, SymbolSearchResult } from "./types.ts";
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -147,4 +149,49 @@ export function useActiveProvider(symbol: string): string | null {
     return md.getActiveProvider ? md.getActiveProvider(symbol) : (getAdapter().name ?? null);
   }, [symbol]);
   return useSyncExternalStore(subscribe, read, read);
+}
+
+interface TvSubsession {
+  id: string;
+  session: string;
+  "session-display"?: string;
+}
+
+interface TvSymbolInfo {
+  timezone?: string;
+  session?: string;
+  session_display?: string;
+  session_holidays?: string;
+  subsessions?: TvSubsession[];
+}
+
+/**
+ * A symbol's trading sessions from TradingView's symbol info (the regular
+ * session, the pre-market / post-market / night sub-sessions, the holidays),
+ * for the legend's market status. Null until known, or when TradingView does
+ * not know the symbol.
+ */
+export function useSymbolSessions(symbol: string): SymbolSessions | null {
+  const { data } = useQuery({
+    queryKey: ["market", "tv-sessions", symbol],
+    queryFn: async (): Promise<SymbolSessions | null> => {
+      const info = await bridgeGet<TvSymbolInfo>("tradingview", "tv/symbol", { symbol }, fetch);
+      if (!info.timezone || !(info.session_display ?? info.session)) return null;
+      const sub = (id: string) => {
+        const s = info.subsessions?.find((x) => x.id === id);
+        return s ? (s["session-display"] ?? s.session) : undefined;
+      };
+      return {
+        timezone: info.timezone,
+        session: (info.session_display ?? info.session)!,
+        preMarket: sub("premarket"),
+        postMarket: sub("postmarket"),
+        night: sub("night"),
+        holidays: info.session_holidays,
+      };
+    },
+    staleTime: 6 * 60 * 60_000,
+    retry: 1,
+  });
+  return data ?? null;
 }

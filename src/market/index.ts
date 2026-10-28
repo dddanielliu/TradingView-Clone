@@ -17,5 +17,15 @@ export {
   useQuoteStats,
   useResolvedSymbol,
   useSymbolSearch,
+  useSymbolSessions,
 } from "./hooks.ts";
+export {
+  countdownText,
+  daySegments,
+  marketStatusAt,
+  nextSessionEdge,
+  timezoneLabel,
+  type MarketStatus,
+  type SymbolSessions,
+} from "./session.ts";
 export { parseId, toYahooTicker, fromYahooTicker } from "./symbols.ts";

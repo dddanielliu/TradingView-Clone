@@ -143,7 +143,13 @@ export function useCandles(symbol: string, timeframe: string, limit?: number) {
     // limit in the key) is in-flight. Without this, switching from firstPaint
     // → deep limit causes a momentary empty array, which lets a live WS candle
     // paint as the only bar before history arrives.
-    placeholderData: (prev) => prev,
+    // Only for the same symbol and timeframe: another chart's candles would
+    // stand in for this one's, and its first live price would be merged into
+    // their last bar (a huge red / green candle until the history arrives).
+    placeholderData: (prev, prevQuery) => {
+      const k = prevQuery?.queryKey;
+      return k && k[1] === symbol && k[2] === timeframe ? prev : undefined;
+    },
     // When the server signals the response is partial (backfill queued), poll
     // at 3 s until data fills in. Otherwise use the 5-min safety-net cadence.
     refetchInterval: (query) => (query.state.data?.metadata?.isPartial ? 3_000 : 5 * 60_000),

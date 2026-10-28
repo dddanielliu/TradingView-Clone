@@ -63,6 +63,8 @@ import { futureBarTimes, isIntraday, liveBucket, sessionOpenOffset, timeframeSec
 import { fromChartTime, setChartTimeShift, toChartTime } from "../../lib/chart-time.ts";
 import { CountdownLabel, countdownText } from "../../lib/chart-plugins/countdown-label.ts";
 import { InlineTextEditor } from "./InlineTextEditor.tsx";
+import { MarketStatusPill } from "./MarketStatusPill.tsx";
+import { useSymbolSessions } from "../../market/index.ts";
 import type { LegendLine } from "../../lib/chart-snapshot.ts";
 import { initialImageSize, setOnImageLoaded } from "../../lib/chart-plugins/drawing-tools/annotationtools.ts";
 import { BoldPriceTicks } from "../../lib/chart-plugins/bold-price-ticks.ts";
@@ -1135,6 +1137,8 @@ function ChartLegendHeader({
   tradingConnected?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  // The market status pill needs the symbol's sessions (TradingView's symbol info).
+  const sessions = useSymbolSessions(selectedSymbol);
   const colon = selectedSymbol.indexOf(":");
   const exchange = colon > 0 ? selectedSymbol.slice(0, colon) : null;
   const ticker = colon > 0 ? selectedSymbol.slice(colon + 1) : selectedSymbol;
@@ -1180,7 +1184,8 @@ function ChartLegendHeader({
               </span>
             )}
           </span>
-          {!isReplaying && (
+          {!isReplaying && sessions && <MarketStatusPill sessions={sessions} />}
+          {!isReplaying && !sessions && (
             <span
               title="Live data"
               className="flex h-[20px] shrink-0 items-center rounded-[10px] bg-[#089981]/15 px-[7px]"

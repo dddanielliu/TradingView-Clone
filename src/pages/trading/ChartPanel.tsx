@@ -513,8 +513,11 @@ function buildTickBar(
     };
   }
   if ((bucketTime as number) <= (prev.time as number)) return null;
+  // A tick more than one bar past the last bar (a closed session, or a gap)
+  // does not invent a candle: the bars in between come from a refetch.
   if ((bucketTime as number) - (prev.time as number) > intervalSecOf(ctx.timeframe) * 1.5) {
     requestGapRefetch(ctx.gapAt, ctx.qc, ctx.symbol, ctx.timeframe);
+    return null;
   }
   const seedOpen = prev.close;
   return {
@@ -554,6 +557,8 @@ function applyTick(tick: TickData, ctx: RtCtx): void {
   if (ctx.liveCandleTs.current && tickMs <= ctx.liveCandleTs.current) return;
   const prev = ctx.lastCandle.current;
   if (!prev) return;
+  // A quote with no price (0 / 0, or not a number) is no trade: never paint it.
+  if (!Number.isFinite(tick.bid) || !Number.isFinite(tick.ask) || (tick.bid === 0 && tick.ask === 0)) return;
   const mid = (tick.bid + tick.ask) / 2;
   const bucketTime = toChartTime(liveBucket(Math.floor(tickMs / 1000), ctx.timeframe, ctx.sessionOffset.current)) as Time;
   const isContinuation = prev.time === bucketTime;
